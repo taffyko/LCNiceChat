@@ -1,0 +1,9 @@
+{
+	"name": "NiceChat",
+	"version_number": "1.0.0",
+	"website_url": "https://github.com/taffyko/LCNiceChat",
+	"description": "Better usability for text-chat. Partially client-side mod that increases the 30 character message limit, removes the message history limit, and more.",
+	"dependencies": [
+		"BepInEx-BepInExPack-5.4.2100"
+	]
+}
