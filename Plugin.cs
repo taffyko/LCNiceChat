@@ -17,7 +17,7 @@ namespace NiceChat;
 public class Plugin : BaseUnityPlugin {
     public const string modGUID = "taffyko.NiceChat";
     public const string modName = "NiceChat";
-    public const string modVersion = "1.0.0";
+    public const string modVersion = "1.0.1";
     
     private readonly Harmony harmony = new Harmony(modGUID);
     public static ManualLogSource? log;
@@ -26,6 +26,8 @@ public class Plugin : BaseUnityPlugin {
     public static float DefaultFontSize => defaultFontSize ?? 11f;
     private static bool? enlargeChatWindow;
     public static bool EnlargeChatWindow => enlargeChatWindow ?? true;
+    private static int? characterLimit;
+    public static int CharacterLimit => characterLimit ?? 1000;
 
     private void Awake() {
         if (float.TryParse(
@@ -36,12 +38,17 @@ public class Plugin : BaseUnityPlugin {
             Config.Bind<string?>("Chat", "EnlargeChatWindow", null, "(default: true) Increases the size of the chat area").Value,
             out bool _enlargeChatWindow
         )) { enlargeChatWindow = _enlargeChatWindow; };
+        if (int.TryParse(
+            Config.Bind<string?>("Chat", "CharacterLimit", null, "(default: 1000) Maximum character limit for messages in your lobby (Only applies if you are the host)").Value,
+            out var _characterLimit
+        )) { characterLimit = _characterLimit; };
         log = BepInEx.Logging.Logger.CreateLogSource(modName);
         log.LogInfo($"Loading {modGUID}");
 
         // Plugin startup logic
         harmony.PatchAll(Assembly.GetExecutingAssembly());
     }
+
     private void OnDestroy() {
         #if DEBUG
         log?.LogInfo($"Unloading {modGUID}");
@@ -59,17 +66,23 @@ public class Plugin : BaseUnityPlugin {
     }
 }
 
+
 [HarmonyPatch]
 internal class Patches {
     public class CustomFields {
         public InputAction? shiftAction = null;
+        public InputAction? scrollAction = null;
         public TMPro.TMP_Text? chatText = null;
         public TMPro.TMP_InputField? chatTextField = null;
+        public float previousChatTextHeight = 0f;
+        public float previousScrollPosition = 0f;
         public RectTransform? chatTextBgRect = null;
         public RectTransform? chatTextFieldRect = null;
         public RectTransform? chatTextRect = null;
         public RectTransform? scrollContainerRect = null;
+        public ScrollRect? scroll = null;
         public bool? serverHasMod = null;
+        public int? serverCharacterLimit = null;
         public bool handlerRegistered = false;
     }
 
@@ -92,7 +105,7 @@ internal class Patches {
 
         if (f.chatTextField != null) {
             if (f.serverHasMod == true) {
-                f.chatTextField.characterLimit = 500;
+                f.chatTextField.characterLimit = f.serverCharacterLimit ?? 500;
             } else {
                 f.chatTextField.characterLimit = 49;
             }
@@ -109,9 +122,17 @@ internal class Patches {
 
         if (f.chatText != null) {
             f.chatText.fontSize = Plugin.DefaultFontSize;
+            // If text history approaches the maximum display limit, trim old chat history
+            if (f.chatText.text.Length > f.chatText.maxVisibleCharacters) {
+                var oneTenthOfLimit = f.chatText.maxVisibleCharacters/10;
+                while (f.chatText.text.Length > (f.chatText.maxVisibleCharacters - oneTenthOfLimit)) {
+                    f.chatText.text = f.chatText.text.Remove(0, HUDManager.Instance.ChatMessageHistory[0].Length);
+                    HUDManager.Instance.ChatMessageHistory.RemoveAt(0);
+                }
+            }
         }
 
-        if (f.chatTextRect != null && f.chatTextBgRect != null && f.chatTextFieldRect != null) {
+        if (f.chatText != null && f.chatTextRect != null && f.chatTextBgRect != null && f.chatTextFieldRect != null) {
             if (Plugin.EnlargeChatWindow) {
                 f.chatTextBgRect.anchorMin = new Vector2(0.35f, 0.5f);
                 f.chatTextBgRect.anchorMax = new Vector2(0.80f, 0.5f);
@@ -124,6 +145,7 @@ internal class Patches {
                 f.chatTextFieldRect.anchorMax = new Vector2(0.5f, 0.5f);
             }
 
+            // Scroll container setup
             if (f.scrollContainerRect == null) {
                 f.scrollContainerRect = f.chatTextBgRect.parent.Find("ChatScrollContainer")?.GetComponent<RectTransform>();
                 if (f.scrollContainerRect == null) {
@@ -137,7 +159,7 @@ internal class Patches {
                     f.scrollContainerRect.SetParent(f.chatTextBgRect, false);
 
                     // Create mask rect for scrolling content
-                    var scrollMask = new GameObject{ name = "ScrollMask" };
+                    var scrollMask = new GameObject { name = "ScrollMask" };
                     var scrollMaskRect = scrollMask.AddComponent<RectTransform>();
                     var scrollMaskImage = scrollMask.AddComponent<Image>(); // Implicitly adds CanvasRenderer component
                     scrollMaskImage.sprite = Sprite.Create(Texture2D.whiteTexture, new Rect(0,0,1,1), new Vector2(0, 0));
@@ -153,30 +175,77 @@ internal class Patches {
                     // Parent chatText to mask
                     f.chatTextRect.SetParent(scrollMaskRect, false);
 
+                    f.chatText.gameObject.TryGetComponent<LayoutElement>(out var layoutElement);
+                    Object.Destroy(layoutElement);
+                    layoutElement = f.chatText.gameObject.AddComponent<LayoutElement>();
+                    layoutElement.minHeight = scrollMaskRect.rect.height;
+
+                    f.chatText.alignment = TMPro.TextAlignmentOptions.BottomLeft;
+
+                    f.chatText.gameObject.TryGetComponent<ContentSizeFitter>(out var fitter);
+                    Object.Destroy(fitter);
+                    var containerFitter = f.chatText.gameObject.AddComponent<ContentSizeFitter>();
+                    containerFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+                    containerFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+
                     // Add `ScrollRect` component and configure
-                    var scrollComponent = scrollContainer.AddComponent<ScrollRect>();
-                    scrollComponent.content = f.chatTextRect;
-                    scrollComponent.viewport = scrollMaskRect;
-                    scrollComponent.vertical = true;
-                    scrollComponent.horizontal = false;
+                    f.scroll = scrollContainer.AddComponent<ScrollRect>();
+                    f.scroll.content = f.chatTextRect;
+                    f.scroll.viewport = scrollMaskRect;
+                    f.scroll.vertical = true;
+                    f.scroll.horizontal = false;
                 }
             }
 
-            // Make chatText fill the scroll container
-            f.chatTextRect.anchorMin = Vector2.zero;
-            f.chatTextRect.anchorMax = Vector2.one;
-            // Horizontal margins
-            f.chatTextRect.offsetMin = new Vector2(9f, 0f);
-            f.chatTextRect.offsetMax = new Vector2(-5f, 0f);
+
+            f.chatText.gameObject.TryGetComponent<LayoutElement>(out var chatLayoutElement);
+            if (chatLayoutElement != null) {
+                var parentRect = f.chatTextRect.parent.GetComponent<RectTransform>();
+                chatLayoutElement.minHeight = parentRect.rect.height;
+                // Horizontal alignment of chatText
+                f.chatTextRect.sizeDelta = new Vector2(parentRect.rect.width - 10f, f.chatTextRect.sizeDelta.y);
+                f.chatTextRect.localPosition = new Vector2(3f, f.chatTextRect.localPosition.y);
+            }
+
+            if (f.chatTextField != null) {
+                // Allow scrolling when focused
+                if (f.chatTextField.isFocused && f.scrollAction != null && f.scroll != null) {
+                    float deltaScroll = f.scrollAction.ReadValue<Vector2>().y/120f; // one Windows scroll increment = 120
+                    deltaScroll /= f.chatTextRect.rect.height; // 1 pixel per increment
+                    deltaScroll *= 30f; // 30 pixels per increment
+                    f.scroll.verticalNormalizedPosition += deltaScroll;
+                }
+
+                // When chatText height changes (message added)...
+                if (f.scroll != null) {
+                    if (f.chatTextRect.rect.height != f.previousChatTextHeight) {
+                        if (f.chatTextField.isFocused && f.scroll.verticalNormalizedPosition <= 0f) {
+                            // If the input is focused, restore the scroll position to prevent the user's place in history from being lost
+                            var scrollPxFromTop  = (1 - f.previousScrollPosition)*f.previousChatTextHeight;
+                            var scrollPx = f.chatTextRect.rect.height - scrollPxFromTop;
+                            f.scroll.verticalNormalizedPosition = scrollPx/f.chatTextRect.rect.height;
+                        } else {
+                            // Otherwise, jump to the most recent message
+                            f.scroll.verticalNormalizedPosition = 0f;
+                        }
+                        f.previousChatTextHeight = f.chatTextRect.rect.height;
+                    }
+                    f.previousScrollPosition = f.scroll.verticalNormalizedPosition;
+                }
+            }
         }
     }
 
     [HarmonyPatch(typeof(PlayerControllerB), "OnDestroy")]
     [HarmonyPostfix]
     private static void OnDestroy(PlayerControllerB __instance) {
-        NetworkManager.Singleton?.CustomMessagingManager?.UnregisterNamedMessageHandler(Plugin.modGUID);
+        NetworkManager.Singleton?.CustomMessagingManager?.UnregisterNamedMessageHandler(msgModVersion);
+        NetworkManager.Singleton?.CustomMessagingManager?.UnregisterNamedMessageHandler(msgCharacterLimit);
         fields.Remove(__instance);
     }
+
+    public const string msgModVersion = Plugin.modGUID;
+    public const string msgCharacterLimit = $"{Plugin.modGUID}.characterLimit";
 
     // Sets up references and handlers as needed, so that the mod can be hot-reloaded at any time
     private static void reload(PlayerControllerB __instance) {
@@ -188,18 +257,31 @@ internal class Patches {
         if (__instance.NetworkManager.IsConnectedClient || __instance.NetworkManager.IsServer) {
             var msgManager = __instance.NetworkManager.CustomMessagingManager;
             if (!f.handlerRegistered) {
-                msgManager.RegisterNamedMessageHandler(Plugin.modGUID, (ulong clientId, FastBufferReader reader) => {
+                msgManager.RegisterNamedMessageHandler(msgModVersion, (ulong clientId, FastBufferReader reader) => {
                     if (__instance.NetworkManager.IsServer) {
-                        // Modded server responds to inquiries from clients
-                        msgManager.SendNamedMessage(Plugin.modGUID, clientId, new FastBufferWriter(0, Allocator.Temp));
+                        // Modded server responds to version inquiries from clients
+                        var writer = new FastBufferWriter(100, Allocator.Temp);
+                        writer.WriteValue(Plugin.modVersion);
+                        msgManager.SendNamedMessage(msgModVersion, clientId, writer);
                     } else {
                         // If the server responds, the client knows it has the mod
                         f.serverHasMod = true;
                     }
                 });
+                msgManager.RegisterNamedMessageHandler(msgCharacterLimit, (ulong clientId, FastBufferReader reader) => {
+                    if (__instance.NetworkManager.IsServer) {
+                        // Modded server responds to character limit inquiries from clients
+                        var writer = new FastBufferWriter(100, Allocator.Temp);
+                        writer.WriteValue(Plugin.CharacterLimit);
+                        msgManager.SendNamedMessage(msgCharacterLimit, clientId, writer);
+                    } else {
+                        // If the server responds, the client knows the character limit
+                        reader.ReadValue(out int characterLimit);
+                        f.serverCharacterLimit = characterLimit;
+                    }
+                });
                 f.handlerRegistered = true;
             }
-
 
             if (f.serverHasMod == null) {
                 if (__instance.NetworkManager.IsServer) {
@@ -207,8 +289,24 @@ internal class Patches {
                     f.serverHasMod = true;
                 } else {
                     // Connected clients send a message to check whether the server has the mod
+                    var writer = new FastBufferWriter(100, Allocator.Temp);
+                    writer.WriteValue(Plugin.modVersion);
+                    msgManager.SendNamedMessage(msgModVersion, NetworkManager.ServerClientId, writer);
+                    // Until a response is received, assume vanilla
                     f.serverHasMod = false;
-                    msgManager.SendNamedMessage(Plugin.modGUID, NetworkManager.ServerClientId, new FastBufferWriter(0, Allocator.Temp));
+                }
+            }
+
+            if (f.serverHasMod == true && f.serverCharacterLimit == null) {
+                if (__instance.NetworkManager.IsServer) {
+                    // Modded server knows its own character limit
+                    f.serverCharacterLimit = Plugin.CharacterLimit;
+                } else {
+                    // Connected clients send a message to ask the server what the configured character limit is
+                    var writer = new FastBufferWriter(0, Allocator.Temp);
+                    msgManager.SendNamedMessage(msgCharacterLimit, NetworkManager.ServerClientId, writer);
+                    // Until a response is received, assume the v1.0.0 default of 500 characters
+                    f.serverCharacterLimit = 500;
                 }
             }
         }
@@ -237,6 +335,15 @@ internal class Patches {
                 __instance.playerActions.Enable();
             }
             f.shiftAction?.Enable();
+        }
+        if (f.scrollAction == null) {
+            f.scrollAction = __instance.playerActions.FindAction($"{Plugin.modGUID}.Scroll");
+            if (f.scrollAction == null) {
+                __instance.playerActions.Disable();
+                var map = __instance.playerActions.Movement;
+                f.scrollAction = InputActionSetupExtensions.AddAction(map, $"{Plugin.modGUID}.Scroll", binding: Mouse.current.scroll.path, type: InputActionType.Value);
+                __instance.playerActions.Enable();
+            }
         }
     }
 
@@ -282,6 +389,11 @@ internal class Patches {
         }
     }
 
+    public static int GetCharacterLimit() {
+        return Plugin.CharacterLimit + 1;
+    }
+    static MethodInfo getCharacterLimit = typeof(Patches).GetMethod(nameof(GetCharacterLimit));
+
     [HarmonyPatch(typeof(HUDManager), "SubmitChat_performed")]
     [HarmonyPatch(typeof(HUDManager), "AddPlayerChatMessageServerRpc")]
     [HarmonyTranspiler]
@@ -291,7 +403,7 @@ internal class Patches {
             if (instruction.opcode == OpCodes.Ldc_I4_S) {
                 if ((sbyte)instruction.operand == 50) {
                     found = true;
-                    yield return new CodeInstruction(OpCodes.Ldc_I4, 501);
+                    yield return new CodeInstruction(OpCodes.Call, getCharacterLimit);
                 }
             }
             if (!found) {
