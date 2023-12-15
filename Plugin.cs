@@ -28,6 +28,8 @@ public class Plugin : BaseUnityPlugin {
     public static bool EnlargeChatWindow => enlargeChatWindow ?? true;
     private static int? characterLimit;
     public static int CharacterLimit => characterLimit ?? 1000;
+    private static bool? enableTimestamps;
+    public static bool EnableTimestamps => enableTimestamps ?? true;
 
     private void Awake() {
         if (float.TryParse(
@@ -42,6 +44,10 @@ public class Plugin : BaseUnityPlugin {
             Config.Bind<string?>("Chat", "CharacterLimit", null, "(default: 1000) Maximum character limit for messages in your lobby (Only applies if you are the host)").Value,
             out var _characterLimit
         )) { characterLimit = _characterLimit; };
+        if (bool.TryParse(
+            Config.Bind<string?>("Chat", "EnableTimestamps", null, "(default: true) Adds timestamps to messages whenever the clock is visible").Value,
+            out var _enableTimestamps
+        )) { enableTimestamps = _enableTimestamps; };
         log = BepInEx.Logging.Logger.CreateLogSource(modName);
         log.LogInfo($"Loading {modGUID}");
 
@@ -81,6 +87,7 @@ internal class Patches {
         public RectTransform? chatTextRect = null;
         public RectTransform? scrollContainerRect = null;
         public ScrollRect? scroll = null;
+        public Scrollbar? scrollbar = null;
         public bool? serverHasMod = null;
         public int? serverCharacterLimit = null;
         public bool handlerRegistered = false;
@@ -194,6 +201,36 @@ internal class Patches {
                     f.scroll.viewport = scrollMaskRect;
                     f.scroll.vertical = true;
                     f.scroll.horizontal = false;
+                    f.scroll.verticalNormalizedPosition = 0f;
+
+                    // Scrollbar
+                    var scrollBar = new GameObject() { name = "ScrollBar" };
+                    var scrollBarRect = scrollBar.AddComponent<RectTransform>();
+                    scrollBarRect.SetParent(f.scrollContainerRect, false);
+                    scrollBarRect.anchorMin = new Vector2(1, 0);
+                    scrollBarRect.anchorMax = Vector2.one;
+                    // Scrollbar horizontal positioning and width
+                    scrollBarRect.offsetMin = new Vector2(-7, 0);
+                    scrollBarRect.offsetMax = new Vector2(-5, -5);
+                    f.scrollbar = scrollBar.AddComponent<Scrollbar>();
+                    var scrollBarImage = scrollBar.AddComponent<Image>();
+                    scrollBarImage.sprite = Sprite.Create(Texture2D.whiteTexture, new Rect(0,0,1,1), new Vector2(0, 0));
+                    scrollBarImage.color = new Color(88f/255f, 94f/255f, 209f/255f, 50f/255f);
+
+                    var scrollHandle = new GameObject() { name = "ScrollBarHandle" };
+                    var scrollHandleRect = scrollHandle.AddComponent<RectTransform>();
+                    scrollHandleRect.SetParent(scrollBarRect, false);
+                    scrollHandleRect.offsetMin = Vector2.zero;
+                    scrollHandleRect.offsetMax = Vector2.zero;
+                    var scrollHandleImage = scrollHandle.AddComponent<Image>();
+                    scrollHandleImage.sprite = Sprite.Create(Texture2D.whiteTexture, new Rect(0,0,1,1), new Vector2(0, 0));
+                    scrollHandleImage.color = Color.white;
+
+                    scrollHandleImage.color = new Color(88f/255f, 94f/255f, 209f/255f, 112f/255f);
+
+                    f.scrollbar.handleRect = scrollHandleRect;
+                    f.scrollbar.direction = Scrollbar.Direction.BottomToTop;
+                    f.scroll.verticalScrollbar = f.scrollbar;
                 }
             }
 
@@ -203,8 +240,8 @@ internal class Patches {
                 var parentRect = f.chatTextRect.parent.GetComponent<RectTransform>();
                 chatLayoutElement.minHeight = parentRect.rect.height;
                 // Horizontal alignment of chatText
-                f.chatTextRect.sizeDelta = new Vector2(parentRect.rect.width - 10f, f.chatTextRect.sizeDelta.y);
-                f.chatTextRect.localPosition = new Vector2(3f, f.chatTextRect.localPosition.y);
+                f.chatTextRect.sizeDelta = new Vector2(parentRect.rect.width - 12f, f.chatTextRect.sizeDelta.y);
+                f.chatTextRect.localPosition = new Vector2(0f, f.chatTextRect.localPosition.y);
             }
 
             if (f.chatTextField != null) {
@@ -216,19 +253,30 @@ internal class Patches {
                     f.scroll.verticalNormalizedPosition += deltaScroll;
                 }
 
-                // When chatText height changes (message added)...
-                if (f.scroll != null) {
-                    if (f.chatTextRect.rect.height != f.previousChatTextHeight) {
-                        if (f.chatTextField.isFocused && f.scroll.verticalNormalizedPosition <= 0f) {
-                            // If the input is focused, restore the scroll position to prevent the user's place in history from being lost
-                            var scrollPxFromTop  = (1 - f.previousScrollPosition)*f.previousChatTextHeight;
-                            var scrollPx = f.chatTextRect.rect.height - scrollPxFromTop;
-                            f.scroll.verticalNormalizedPosition = scrollPx/f.chatTextRect.rect.height;
-                        } else {
-                            // Otherwise, jump to the most recent message
-                            f.scroll.verticalNormalizedPosition = 0f;
+                if (f.scroll != null && f.scrollbar != null) {
+                    // Hide scrollbar handle when it fills the whole scrollbar
+                    if (f.chatText.preferredHeight < f.scrollContainerRect.rect.height) {
+                        f.scrollbar.handleRect.GetComponent<Image>().color = new Color(0,0,0,0);
+                    } else {
+                        f.scrollbar.handleRect.GetComponent<Image>().color = new Color(88f/255f, 94f/255f, 209f/255f, 112f/255f);
+                    }
+                    if (f.chatTextField.isFocused) {
+                        // When chatText height changes (message added) while the input is focused...
+                        if (f.chatTextRect.rect.height != f.previousChatTextHeight) {
+                            if (f.chatTextField.isFocused && f.scroll.verticalNormalizedPosition >= (100/f.chatTextRect.rect.height)) {
+                                // If scrolled up by at least 100px, restore the scroll position to prevent the user's place in history from being lost
+                                var scrollPxFromTop  = (1 - f.previousScrollPosition)*f.previousChatTextHeight;
+                                var scrollPx = f.chatTextRect.rect.height - scrollPxFromTop;
+                                f.scroll.verticalNormalizedPosition = scrollPx/f.chatTextRect.rect.height;
+                            } else {
+                                // Otherwise, jump to the most recent message
+                                f.scroll.verticalNormalizedPosition = 0f;
+                            }
+                            f.previousChatTextHeight = f.chatTextRect.rect.height;
                         }
-                        f.previousChatTextHeight = f.chatTextRect.rect.height;
+                    } else {
+                        // Always remain scrolled to latest message when the chat input is unfocused
+                        f.scroll.verticalNormalizedPosition = 0f;
                     }
                     f.previousScrollPosition = f.scroll.verticalNormalizedPosition;
                 }
@@ -356,24 +404,53 @@ internal class Patches {
 
     public static string GetChatMessageNameColorTag() {
         var color = "#FF0000";
-        return $"<color={color}>";
+        var timestamp = "";
+        if (Plugin.EnableTimestamps && TimeOfDay.Instance.currentDayTimeStarted && HUDManager.Instance?.clockNumber != null && HUDManager.Instance.clockNumber.IsActive() && HUDManager.Instance.Clock.targetAlpha > 0f) {
+            timestamp = $"<color=#7069ff>[{HUDManager.Instance.clockNumber.text.Replace("\n", "")}] </color>";
+        }
+        return $"{timestamp}<color={color}>";
     }
     static MethodInfo getChatMessageNameColorTag = typeof(Patches).GetMethod(nameof(GetChatMessageNameColorTag));
+    static MethodInfo stringEqual = typeof(string).GetMethod("op_Equality", new[] { typeof(string), typeof(string) });
+
+
+    [HarmonyPatch(typeof(HUDManager), "AddPlayerChatMessageClientRpc")]
+    [HarmonyPrefix]
+    private static bool AddPlayerChatMessageClientRpc(string chatMessage, int playerId, HUDManager __instance) {
+        // Skip adding message received from server to the message history if you are the one who sent the message to the server
+        object __rpc_exec_stage = Traverse.Create(__instance).Field("__rpc_exec_stage").GetValue();
+        if ((int)__rpc_exec_stage == 0x02 /* client */) {
+            if (playerId != -1) {
+                if (StartOfRound.Instance.allPlayerScripts[playerId].playerClientId == NetworkManager.Singleton.LocalClientId) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
 
     [HarmonyPatch(typeof(HUDManager), "AddChatMessage")]
     [HarmonyTranspiler]
     private static IEnumerable<CodeInstruction> transpiler_AddChatMessage(IEnumerable<CodeInstruction> instructions) {
         bool foundMaxMessageCount = false;
+        bool foundPreviousMessageComparison = false;
         foreach (var instruction in instructions) {
             // Remove chat message history limit of 4
             if (!foundMaxMessageCount && instruction.opcode == OpCodes.Ldc_I4_4) {
                 yield return new CodeInstruction(OpCodes.Ldc_I4, int.MaxValue);
                 foundMaxMessageCount = true;
                 continue;
-            }
-            if (instruction.opcode == OpCodes.Ldstr) {
-                switch ((string)instruction.operand)
-                {
+            } else if (!foundPreviousMessageComparison && instruction.opcode == OpCodes.Call && instruction.operand == (object)stringEqual) {
+                // Limit the check that prevents the same message from being sent twice to only apply when the message sender is a non-player)
+                // (This results in messages printing twice, once locally, and once after the server broadcasts the message back, which is fixed in a patch to `AddPlayerChatMessageClientRpc`)
+                foundPreviousMessageComparison = true;
+                yield return instruction;
+                yield return new CodeInstruction(OpCodes.Ldarg_2); // message sender name
+                yield return new CodeInstruction(OpCodes.Call, typeof(string).GetMethod(nameof(string.IsNullOrEmpty)));
+                yield return new CodeInstruction(OpCodes.And);
+                continue;
+            } else if (instruction.opcode == OpCodes.Ldstr) {
+                switch ((string)instruction.operand) {
                     case "<color=#FF0000>":
                         yield return new CodeInstruction(OpCodes.Call, getChatMessageNameColorTag);
                         continue;

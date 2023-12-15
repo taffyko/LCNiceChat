@@ -1,3 +1,8 @@
+# 1.2.0
+- A scrollbar indicator has been added showing your position in history
+- Messages you receive while the clock is visible will now have timestamps (can be disabled in config)
+- Fixes some bugs related to keeping your place in history & seeing the latest messages
+
 # 1.1.0
 - Message history is now scrollable
 - Character limit can now be configured by the host. (defaults to 1000)
