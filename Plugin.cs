@@ -17,7 +17,7 @@ namespace NiceChat;
 public class Plugin : BaseUnityPlugin {
     public const string modGUID = "taffyko.NiceChat";
     public const string modName = "NiceChat";
-    public const string modVersion = "1.0.1";
+    public const string modVersion = "1.2.1";
     
     private readonly Harmony harmony = new Harmony(modGUID);
     public static ManualLogSource? log;
@@ -107,7 +107,7 @@ internal class Patches {
     [HarmonyPostfix]
     private static void Player_Update(PlayerControllerB __instance) {
         reload(__instance);
-        if (NetworkManager.Singleton.LocalClientId != __instance.playerClientId) { return; }
+        if (!__instance.IsOwner) { return; }
         var f = fields[__instance];
 
         if (f.chatTextField != null) {
@@ -300,7 +300,7 @@ internal class Patches {
         if (!fields.ContainsKey(__instance)) { fields[__instance] = new CustomFields(); }
         var f = fields[__instance];
 
-        if (NetworkManager.Singleton?.LocalClientId != __instance.playerClientId) { return; }
+        if (!__instance.IsOwner) { return; }
 
         if (__instance.NetworkManager.IsConnectedClient || __instance.NetworkManager.IsServer) {
             var msgManager = __instance.NetworkManager.CustomMessagingManager;
@@ -370,8 +370,8 @@ internal class Patches {
         if (f.chatTextRect == null && f.chatText != null) {
             f.chatText.TryGetComponent<RectTransform>(out f.chatTextRect);
         }
-        if (f.chatTextBgRect == null && f.chatText != null) {
-            f.chatText.transform.parent.Find("Image")?.TryGetComponent<RectTransform>(out f.chatTextBgRect);
+        if (f.chatTextBgRect == null && f.chatTextField != null) {
+            f.chatTextField.transform.parent.Find("Image")?.TryGetComponent<RectTransform>(out f.chatTextBgRect);
         }
         if (f.shiftAction == null) {
             // Find shiftAction if it's already been created, otherwise create one
@@ -416,17 +416,17 @@ internal class Patches {
 
     [HarmonyPatch(typeof(HUDManager), "AddPlayerChatMessageClientRpc")]
     [HarmonyPrefix]
-    private static bool AddPlayerChatMessageClientRpc(string chatMessage, int playerId, HUDManager __instance) {
+    private static bool AddPlayerChatMessageClientRpc(string chatMessage, int playerId, HUDManager __instance, ref bool __runOriginal) {
         // Skip adding message received from server to the message history if you are the one who sent the message to the server
         object __rpc_exec_stage = Traverse.Create(__instance).Field("__rpc_exec_stage").GetValue();
         if ((int)__rpc_exec_stage == 0x02 /* client */) {
             if (playerId != -1) {
-                if (StartOfRound.Instance.allPlayerScripts[playerId].playerClientId == NetworkManager.Singleton.LocalClientId) {
+                if (StartOfRound.Instance.allPlayerScripts[playerId].IsOwner) {
                     return false;
                 }
             }
         }
-        return true;
+        return __runOriginal;
     }
 
     [HarmonyPatch(typeof(HUDManager), "AddChatMessage")]

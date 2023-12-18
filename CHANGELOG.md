@@ -1,3 +1,6 @@
+# 1.2.1
+- Fixes some bugs when playing with MoreCompany
+
 # 1.2.0
 - A scrollbar indicator has been added showing your position in history
 - Messages you receive while the clock is visible will now have timestamps (can be disabled in config)
