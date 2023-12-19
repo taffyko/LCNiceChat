@@ -1,3 +1,6 @@
+# 1.2.2
+- Bug-fixes, including an issue related to MoreCompany cosmetics ([#2](https://github.com/taffyko/LCNiceChat/issues/2))
+
 # 1.2.1
 - Fixes some bugs when playing with MoreCompany
 

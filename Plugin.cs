@@ -10,14 +10,16 @@ using UnityEngine.InputSystem;
 using System.Reflection.Emit;
 using Unity.Netcode;
 using Unity.Collections;
+using System;
+using System.Linq;
 
 namespace NiceChat;
 
 [BepInPlugin(modGUID, modName, modVersion)]
 public class Plugin : BaseUnityPlugin {
     public const string modGUID = "taffyko.NiceChat";
-    public const string modName = "NiceChat";
-    public const string modVersion = "1.2.1";
+    public const string modName = PluginInfo.PLUGIN_NAME;
+    public const string modVersion = PluginInfo.PLUGIN_VERSION;
     
     private readonly Harmony harmony = new Harmony(modGUID);
     public static ManualLogSource? log;
@@ -32,6 +34,7 @@ public class Plugin : BaseUnityPlugin {
     public static bool EnableTimestamps => enableTimestamps ?? true;
 
     private void Awake() {
+        // See: https://github.com/taffyko/LCNiceChat/issues/3
         if (float.TryParse(
             Config.Bind<string?>("Chat", "DefaultFontSize", null, "(default: 11) The base game's font size is 13").Value,
             out var _defaultFontSize
@@ -96,6 +99,10 @@ internal class Patches {
     // Extra player instance fields
     public static Dictionary<PlayerControllerB, CustomFields> fields = new();
 
+    private static bool IsLocalPlayer(PlayerControllerB __instance) {
+        return __instance == StartOfRound.Instance?.localPlayerController;
+    }
+
     // Custom action used to check if the player is holding either shift key
     [HarmonyPatch(typeof(PlayerControllerB), "Awake")]
     [HarmonyPostfix]
@@ -107,7 +114,7 @@ internal class Patches {
     [HarmonyPostfix]
     private static void Player_Update(PlayerControllerB __instance) {
         reload(__instance);
-        if (!__instance.IsOwner) { return; }
+        if (!IsLocalPlayer(__instance)) { return; }
         var f = fields[__instance];
 
         if (f.chatTextField != null) {
@@ -183,14 +190,14 @@ internal class Patches {
                     f.chatTextRect.SetParent(scrollMaskRect, false);
 
                     f.chatText.gameObject.TryGetComponent<LayoutElement>(out var layoutElement);
-                    Object.Destroy(layoutElement);
+                    UnityEngine.Object.Destroy(layoutElement);
                     layoutElement = f.chatText.gameObject.AddComponent<LayoutElement>();
                     layoutElement.minHeight = scrollMaskRect.rect.height;
 
                     f.chatText.alignment = TMPro.TextAlignmentOptions.BottomLeft;
 
                     f.chatText.gameObject.TryGetComponent<ContentSizeFitter>(out var fitter);
-                    Object.Destroy(fitter);
+                    UnityEngine.Object.Destroy(fitter);
                     var containerFitter = f.chatText.gameObject.AddComponent<ContentSizeFitter>();
                     containerFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
                     containerFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
@@ -300,7 +307,7 @@ internal class Patches {
         if (!fields.ContainsKey(__instance)) { fields[__instance] = new CustomFields(); }
         var f = fields[__instance];
 
-        if (!__instance.IsOwner) { return; }
+        if (!IsLocalPlayer(__instance)) { return; }
 
         if (__instance.NetworkManager.IsConnectedClient || __instance.NetworkManager.IsServer) {
             var msgManager = __instance.NetworkManager.CustomMessagingManager;
@@ -420,8 +427,8 @@ internal class Patches {
         // Skip adding message received from server to the message history if you are the one who sent the message to the server
         object __rpc_exec_stage = Traverse.Create(__instance).Field("__rpc_exec_stage").GetValue();
         if ((int)__rpc_exec_stage == 0x02 /* client */) {
-            if (playerId != -1) {
-                if (StartOfRound.Instance.allPlayerScripts[playerId].IsOwner) {
+            if (playerId >= 0 && playerId < StartOfRound.Instance.allPlayerScripts.Length) {
+                if (IsLocalPlayer(StartOfRound.Instance.allPlayerScripts[playerId])) {
                     return false;
                 }
             }
