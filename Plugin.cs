@@ -34,6 +34,14 @@ public class Plugin : BaseUnityPlugin {
     public static bool EnableTimestamps => enableTimestamps ?? true;
     private static bool? showScrollbar;
     public static bool ShowScrollbar => showScrollbar ?? true;
+    private static float? fadeOpacity;
+    public static float FadeOpacity => fadeOpacity ?? 0.2f;
+    private static float? fadeTimeAfterMessage;
+    public static float FadeTimeAfterMessage => fadeTimeAfterMessage ?? 4.0f;
+    private static float? fadeTimeAfterOwnMessage;
+    public static float FadeTimeAfterOwnMessage => fadeTimeAfterOwnMessage ?? 2.0f;
+    private static float? fadeTimeAfterUnfocused;
+    public static float FadeTimeAfterUnfocused => fadeTimeAfterUnfocused ?? 1.0f;
 
     private void Awake() {
         // See: https://github.com/taffyko/LCNiceChat/issues/3
@@ -57,6 +65,22 @@ public class Plugin : BaseUnityPlugin {
             Config.Bind<string?>("Chat", "ShowScrollbar", null, "(default: true) If false, the scrollbar is permanently hidden even when the chat input is focused").Value,
             out var _showScrollbar
         )) { showScrollbar = _showScrollbar; };
+        if (float.TryParse(
+            Config.Bind<string?>("Fade Behaviour", "FadeOpacity", null, "(default: 0.2) The opacity of the chat when it fades from inactivity. 0.0 makes the chat fade away completely. (The vanilla value is 0.2)").Value,
+            out var _fadeOpacity
+        )) { fadeOpacity = _fadeOpacity; };
+        if (float.TryParse(
+            Config.Bind<string?>("Fade Behaviour", "FadeTimeAfterMessage", null, "(default: 4.0) The amount of seconds before the chat fades out after a message is sent by another player. (The vanilla value is 4.0)").Value,
+            out var _fadeTimeAfterMessage
+        )) { fadeTimeAfterMessage = _fadeTimeAfterMessage; };
+        if (float.TryParse(
+            Config.Bind<string?>("Fade Behaviour", "FadeTimeAfterOwnMessage", null, "(default: 2.0) The amount of seconds before the chat fades out after a message is sent by you. (The vanilla value is 2.0)").Value,
+            out var _fadeTimeAfterOwnMessage
+        )) { fadeTimeAfterOwnMessage = _fadeTimeAfterOwnMessage; };
+        if (float.TryParse(
+            Config.Bind<string?>("Fade Behaviour", "FadeTimeAfterUnfocused", null, "(default: 1.0) The amount of seconds before the chat fades out after the chat input is unfocused. (The vanilla value is 1.0)").Value,
+            out var _fadeTimeAfterUnfocused
+        )) { fadeTimeAfterUnfocused = _fadeTimeAfterUnfocused; };
         log = BepInEx.Logging.Logger.CreateLogSource(modName);
         log.LogInfo($"Loading {modGUID}");
 
@@ -276,6 +300,7 @@ internal class Patches {
                         f.scrollbar.handleRect.GetComponent<Image>().color = new Color(88f/255f, 94f/255f, 209f/255f, 112f/255f);
                     }
                     if (f.chatTextField.isFocused) {
+                        HUDManager.Instance.Chat.targetAlpha = 1f;
                         // When chatText height changes (message added) while the input is focused...
                         if (f.chatTextRect.rect.height != f.previousChatTextHeight) {
                             if (f.chatTextField.isFocused && f.scroll.verticalNormalizedPosition >= (100/f.chatTextRect.rect.height)) {
@@ -418,6 +443,21 @@ internal class Patches {
         return !(fields[StartOfRound.Instance.localPlayerController].shiftAction?.IsPressed()) ?? true;
     }
 
+    [HarmonyPatch(typeof(HUDManager), "PingHUDElement")]
+    [HarmonyPrefix]
+    private static void PingHUDElementPrefix(HUDElement element, ref float delay, float startAlpha, ref float endAlpha) {
+        if (element != null && element == HUDManager.Instance?.Chat) {
+            endAlpha = Plugin.FadeOpacity;
+            if (delay == 4f) {
+                delay = Plugin.FadeTimeAfterMessage;
+            } else if (delay == 2f) {
+                delay = Plugin.FadeTimeAfterOwnMessage;
+            } else if (delay == 1f) {
+                delay = Plugin.FadeTimeAfterUnfocused;
+            }
+        }
+    }
+
     public static string GetChatMessageNameColorTag() {
         var color = "#FF0000";
         var timestamp = "";
@@ -451,8 +491,8 @@ internal class Patches {
         bool foundMaxMessageCount = false;
         bool foundPreviousMessageComparison = false;
         foreach (var instruction in instructions) {
-            // Remove chat message history limit of 4
             if (!foundMaxMessageCount && instruction.opcode == OpCodes.Ldc_I4_4) {
+                // Remove chat message history limit of 4
                 yield return new CodeInstruction(OpCodes.Ldc_I4, int.MaxValue);
                 foundMaxMessageCount = true;
                 continue;

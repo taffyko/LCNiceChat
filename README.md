@@ -13,6 +13,7 @@ All features work client-side unless otherwise mentioned.
 - Messages you receive while the clock is visible will now have timestamps (can be disabled in config)
 - You can now say the same thing multiple times in a row
 	- NOTE: Only players with the mod installed will be able to see repeat messages
+- Can configure the fade-out opacity of the chat (even making it fade away completely), and customize the amount of seconds before fading
 
 
 Chat history scroll demo:  
