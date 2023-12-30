@@ -2,7 +2,7 @@ All features work client-side unless otherwise mentioned.
 
 - Can now **scroll** through chat history (once there's enough history, just scroll with mousewheel while the chat input is active!)
 	- Chat history is no longer limited to 4 messages
-	- A scrollbar shows your position in history.
+	- A scrollbar shows your position in history (can be disabled in config)
 - Increases the 30 character message limit (default: 1000, configurable by host)
 	- NOTE: For this, the mod also needs to be installed by the host.  
 	Without it, the limit can only be increased to ~50.

@@ -32,6 +32,8 @@ public class Plugin : BaseUnityPlugin {
     public static int CharacterLimit => characterLimit ?? 1000;
     private static bool? enableTimestamps;
     public static bool EnableTimestamps => enableTimestamps ?? true;
+    private static bool? showScrollbar;
+    public static bool ShowScrollbar => showScrollbar ?? true;
 
     private void Awake() {
         // See: https://github.com/taffyko/LCNiceChat/issues/3
@@ -51,6 +53,10 @@ public class Plugin : BaseUnityPlugin {
             Config.Bind<string?>("Chat", "EnableTimestamps", null, "(default: true) Adds timestamps to messages whenever the clock is visible").Value,
             out var _enableTimestamps
         )) { enableTimestamps = _enableTimestamps; };
+        if (bool.TryParse(
+            Config.Bind<string?>("Chat", "ShowScrollbar", null, "(default: true) If false, the scrollbar is permanently hidden even when the chat input is focused").Value,
+            out var _showScrollbar
+        )) { showScrollbar = _showScrollbar; };
         log = BepInEx.Logging.Logger.CreateLogSource(modName);
         log.LogInfo($"Loading {modGUID}");
 
@@ -89,6 +95,7 @@ internal class Patches {
         public RectTransform? chatTextFieldRect = null;
         public RectTransform? chatTextRect = null;
         public RectTransform? scrollContainerRect = null;
+        public CanvasGroup? scrollbarCanvasGroup = null;
         public ScrollRect? scroll = null;
         public Scrollbar? scrollbar = null;
         public bool? serverHasMod = null;
@@ -211,22 +218,23 @@ internal class Patches {
                     f.scroll.verticalNormalizedPosition = 0f;
 
                     // Scrollbar
-                    var scrollBar = new GameObject() { name = "ScrollBar" };
-                    var scrollBarRect = scrollBar.AddComponent<RectTransform>();
-                    scrollBarRect.SetParent(f.scrollContainerRect, false);
-                    scrollBarRect.anchorMin = new Vector2(1, 0);
-                    scrollBarRect.anchorMax = Vector2.one;
+                    var scrollbar = new GameObject() { name = "Scrollbar" };
+                    f.scrollbarCanvasGroup = scrollbar.AddComponent<CanvasGroup>();
+                    var scrollbarRect = scrollbar.AddComponent<RectTransform>();
+                    scrollbarRect.SetParent(f.scrollContainerRect, false);
+                    scrollbarRect.anchorMin = new Vector2(1, 0);
+                    scrollbarRect.anchorMax = Vector2.one;
                     // Scrollbar horizontal positioning and width
-                    scrollBarRect.offsetMin = new Vector2(-7, 0);
-                    scrollBarRect.offsetMax = new Vector2(-5, -5);
-                    f.scrollbar = scrollBar.AddComponent<Scrollbar>();
-                    var scrollBarImage = scrollBar.AddComponent<Image>();
-                    scrollBarImage.sprite = Sprite.Create(Texture2D.whiteTexture, new Rect(0,0,1,1), new Vector2(0, 0));
-                    scrollBarImage.color = new Color(88f/255f, 94f/255f, 209f/255f, 50f/255f);
+                    scrollbarRect.offsetMin = new Vector2(-7, 0);
+                    scrollbarRect.offsetMax = new Vector2(-5, -5);
+                    f.scrollbar = scrollbar.AddComponent<Scrollbar>();
+                    var scrollbarImage = scrollbar.AddComponent<Image>();
+                    scrollbarImage.sprite = Sprite.Create(Texture2D.whiteTexture, new Rect(0,0,1,1), new Vector2(0, 0));
+                    scrollbarImage.color = new Color(88f/255f, 94f/255f, 209f/255f, 50f/255f);
 
-                    var scrollHandle = new GameObject() { name = "ScrollBarHandle" };
+                    var scrollHandle = new GameObject() { name = "ScrollbarHandle" };
                     var scrollHandleRect = scrollHandle.AddComponent<RectTransform>();
-                    scrollHandleRect.SetParent(scrollBarRect, false);
+                    scrollHandleRect.SetParent(scrollbarRect, false);
                     scrollHandleRect.offsetMin = Vector2.zero;
                     scrollHandleRect.offsetMax = Vector2.zero;
                     var scrollHandleImage = scrollHandle.AddComponent<Image>();
@@ -260,7 +268,7 @@ internal class Patches {
                     f.scroll.verticalNormalizedPosition += deltaScroll;
                 }
 
-                if (f.scroll != null && f.scrollbar != null) {
+                if (f.scroll != null && f.scrollbar != null && f.scrollbarCanvasGroup != null) {
                     // Hide scrollbar handle when it fills the whole scrollbar
                     if (f.chatText.preferredHeight < f.scrollContainerRect.rect.height) {
                         f.scrollbar.handleRect.GetComponent<Image>().color = new Color(0,0,0,0);
@@ -285,6 +293,7 @@ internal class Patches {
                         // Always remain scrolled to latest message when the chat input is unfocused
                         f.scroll.verticalNormalizedPosition = 0f;
                     }
+                    f.scrollbarCanvasGroup.alpha = Plugin.ShowScrollbar && f.chatTextField.isFocused ? 1f : 0f;
                     f.previousScrollPosition = f.scroll.verticalNormalizedPosition;
                 }
             }

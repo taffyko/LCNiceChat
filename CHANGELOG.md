@@ -1,3 +1,7 @@
+# 1.2.3
+- Scrollbar now only appears while the chat input is focused
+- Scrollbar can now be hidden completely in config
+
 # 1.2.2
 - Bug-fixes, including an issue related to MoreCompany cosmetics ([#2](https://github.com/taffyko/LCNiceChat/issues/2))
 
