@@ -1,6 +1,6 @@
 {
 	"name": "NiceChat",
-	"version_number": "1.2.3",
+	"version_number": "1.2.4",
 	"website_url": "https://github.com/taffyko/LCNiceChat",
 	"description": "Better text chat. Infinite scrolling message history, greatly increased character limit, bigger chat area, and more.",
 	"dependencies": [

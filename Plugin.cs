@@ -11,7 +11,6 @@ using System.Reflection.Emit;
 using Unity.Netcode;
 using Unity.Collections;
 using System;
-using System.Linq;
 
 namespace NiceChat;
 
@@ -470,20 +469,55 @@ internal class Patches {
     static MethodInfo stringEqual = typeof(string).GetMethod("op_Equality", new[] { typeof(string), typeof(string) });
 
 
-    [HarmonyPatch(typeof(HUDManager), "AddPlayerChatMessageClientRpc")]
-    [HarmonyPrefix]
-    private static bool AddPlayerChatMessageClientRpc(string chatMessage, int playerId, HUDManager __instance, ref bool __runOriginal) {
-        // Skip adding message received from server to the message history if you are the one who sent the message to the server
-        object __rpc_exec_stage = Traverse.Create(__instance).Field("__rpc_exec_stage").GetValue();
+    public static bool _HelperMessageSentByLocalPlayer(HUDManager instance, string chatMessage, int playerId) {
+        object __rpc_exec_stage = Traverse.Create(instance).Field("__rpc_exec_stage").GetValue();
         if ((int)__rpc_exec_stage == 0x02 /* client */) {
             if (playerId >= 0 && playerId < StartOfRound.Instance.allPlayerScripts.Length) {
                 if (IsLocalPlayer(StartOfRound.Instance.allPlayerScripts[playerId])) {
-                    return false;
+                    return true;
                 }
             }
         }
-        return __runOriginal;
+        return false;
     }
+
+    [HarmonyPatch(typeof(HUDManager), "AddPlayerChatMessageClientRpc")]
+    [HarmonyTranspiler]
+    private static IEnumerable<CodeInstruction> transpiler_AddPlayerChatMessageClientRpc(IEnumerable<CodeInstruction> instructions, ILGenerator generator) {
+        yield return new CodeInstruction(OpCodes.Ldarg_0);
+        yield return new CodeInstruction(OpCodes.Ldarg_1);
+        yield return new CodeInstruction(OpCodes.Ldarg_2);
+        // check if the message coming from the server was one that you sent and have already added to history on the client-side
+        yield return new CodeInstruction(OpCodes.Call, typeof(Patches).GetMethod(nameof(_HelperMessageSentByLocalPlayer)));
+        var label = generator.DefineLabel();
+        var nopInstruction = new CodeInstruction(OpCodes.Nop);
+        nopInstruction.labels.Add(label);
+        var retInstruction = new CodeInstruction(OpCodes.Ret);
+        var brfalseInstruction = new CodeInstruction(OpCodes.Brfalse, label); // skip early return when function returns false
+        yield return brfalseInstruction;
+        yield return retInstruction;
+        yield return nopInstruction;
+
+        foreach (var instruction in instructions) {
+            yield return instruction;
+        }
+    }
+
+    private static float timeAtLastCheck = 0.0f;
+    public static bool _ShouldSuppressDuplicateMessage(string message, string senderName) {
+        var timeSinceLastCheck = Time.fixedUnscaledTime - timeAtLastCheck;
+        timeAtLastCheck = Time.fixedUnscaledTime;
+        if (string.IsNullOrEmpty(senderName)) {
+            // Don't bypass the check when the sender is a non-player
+            return true;
+        } else if (timeSinceLastCheck >= 0.0f && timeSinceLastCheck < 0.1f) {
+            // Don't bypass the check if less than 100ms have passed since the last identical message
+            // (This was introduced to combat duplicate chat RPC events introduced when playing with the MirrorDecor mod, which caused the host to receive all messages multiple times)
+            return true;
+        }
+        return false;
+    }
+
 
     [HarmonyPatch(typeof(HUDManager), "AddChatMessage")]
     [HarmonyTranspiler]
@@ -497,12 +531,15 @@ internal class Patches {
                 foundMaxMessageCount = true;
                 continue;
             } else if (!foundPreviousMessageComparison && instruction.opcode == OpCodes.Call && instruction.operand == (object)stringEqual) {
-                // Limit the check that prevents the same message from being sent twice to only apply when the message sender is a non-player)
-                // (This results in messages printing twice, once locally, and once after the server broadcasts the message back, which is fixed in a patch to `AddPlayerChatMessageClientRpc`)
+                // Limit the check that prevents the same message from being sent twice to only apply under certain circumstances
+                // so that players can say the same thing twice.
+                // - This results in a player's own messages potentially printing multiple times, once locally, and one or more times after the server broadcasts the message back.
+                //   A patch to `AddPlayerChatMessageClientRpc` attempts to prevent this problem.
                 foundPreviousMessageComparison = true;
                 yield return instruction;
+                yield return new CodeInstruction(OpCodes.Ldarg_1); // message contents
                 yield return new CodeInstruction(OpCodes.Ldarg_2); // message sender name
-                yield return new CodeInstruction(OpCodes.Call, typeof(string).GetMethod(nameof(string.IsNullOrEmpty)));
+                yield return new CodeInstruction(OpCodes.Call, typeof(Patches).GetMethod(nameof(_ShouldSuppressDuplicateMessage)));
                 yield return new CodeInstruction(OpCodes.And);
                 continue;
             } else if (instruction.opcode == OpCodes.Ldstr) {

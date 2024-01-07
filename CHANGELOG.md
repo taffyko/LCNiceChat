@@ -1,3 +1,6 @@
+# 1.2.4
+- Adds a workaround for an incompatibility with MirrorDecor
+
 # 1.2.3
 - Scrollbar now only appears while the chat input is focused
 - Scrollbar can now be hidden completely in config ([#4](https://github.com/taffyko/LCNiceChat/issues/4))
