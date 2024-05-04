@@ -1,3 +1,10 @@
+# 1.2.5
+- Fixes an issue where the character limit would not increase for clients when playing with TooManyEmotes
+- Chat now fully fades away by default
+- Adds a workaround to improve compatibility with mods like LethalLoudnessMeter that add HUD elements in the bottom-left corner,
+  preventing their HUD elements from fading when the chat fades.
+- The color of the text in the input field can now be configured, and defaults to white for better visibility
+
 # 1.2.4
 - Adds a workaround for an incompatibility with MirrorDecor
 

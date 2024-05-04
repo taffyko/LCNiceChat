@@ -11,75 +11,23 @@ using System.Reflection.Emit;
 using Unity.Netcode;
 using Unity.Collections;
 using System;
+using System.Linq;
+using TMPro;
 
 namespace NiceChat;
 
 [BepInPlugin(modGUID, modName, modVersion)]
-public class Plugin : BaseUnityPlugin {
+public partial class Plugin : BaseUnityPlugin {
     public const string modGUID = "taffyko.NiceChat";
     public const string modName = PluginInfo.PLUGIN_NAME;
     public const string modVersion = PluginInfo.PLUGIN_VERSION;
     
     private readonly Harmony harmony = new Harmony(modGUID);
     public static ManualLogSource? log;
-
-    private static float? defaultFontSize;
-    public static float DefaultFontSize => defaultFontSize ?? 11f;
-    private static bool? enlargeChatWindow;
-    public static bool EnlargeChatWindow => enlargeChatWindow ?? true;
-    private static int? characterLimit;
-    public static int CharacterLimit => characterLimit ?? 1000;
-    private static bool? enableTimestamps;
-    public static bool EnableTimestamps => enableTimestamps ?? true;
-    private static bool? showScrollbar;
-    public static bool ShowScrollbar => showScrollbar ?? true;
-    private static float? fadeOpacity;
-    public static float FadeOpacity => fadeOpacity ?? 0.2f;
-    private static float? fadeTimeAfterMessage;
-    public static float FadeTimeAfterMessage => fadeTimeAfterMessage ?? 4.0f;
-    private static float? fadeTimeAfterOwnMessage;
-    public static float FadeTimeAfterOwnMessage => fadeTimeAfterOwnMessage ?? 2.0f;
-    private static float? fadeTimeAfterUnfocused;
-    public static float FadeTimeAfterUnfocused => fadeTimeAfterUnfocused ?? 1.0f;
+    internal static List<Action> cleanupActions = new List<Action>();
 
     private void Awake() {
-        // See: https://github.com/taffyko/LCNiceChat/issues/3
-        if (float.TryParse(
-            Config.Bind<string?>("Chat", "DefaultFontSize", null, "(default: 11) The base game's font size is 13").Value,
-            out var _defaultFontSize
-        )) { defaultFontSize = _defaultFontSize; };
-        if (bool.TryParse(
-            Config.Bind<string?>("Chat", "EnlargeChatWindow", null, "(default: true) Increases the size of the chat area").Value,
-            out bool _enlargeChatWindow
-        )) { enlargeChatWindow = _enlargeChatWindow; };
-        if (int.TryParse(
-            Config.Bind<string?>("Chat", "CharacterLimit", null, "(default: 1000) Maximum character limit for messages in your lobby (Only applies if you are the host)").Value,
-            out var _characterLimit
-        )) { characterLimit = _characterLimit; };
-        if (bool.TryParse(
-            Config.Bind<string?>("Chat", "EnableTimestamps", null, "(default: true) Adds timestamps to messages whenever the clock is visible").Value,
-            out var _enableTimestamps
-        )) { enableTimestamps = _enableTimestamps; };
-        if (bool.TryParse(
-            Config.Bind<string?>("Chat", "ShowScrollbar", null, "(default: true) If false, the scrollbar is permanently hidden even when the chat input is focused").Value,
-            out var _showScrollbar
-        )) { showScrollbar = _showScrollbar; };
-        if (float.TryParse(
-            Config.Bind<string?>("Fade Behaviour", "FadeOpacity", null, "(default: 0.2) The opacity of the chat when it fades from inactivity. 0.0 makes the chat fade away completely. (The vanilla value is 0.2)").Value,
-            out var _fadeOpacity
-        )) { fadeOpacity = _fadeOpacity; };
-        if (float.TryParse(
-            Config.Bind<string?>("Fade Behaviour", "FadeTimeAfterMessage", null, "(default: 4.0) The amount of seconds before the chat fades out after a message is sent by another player. (The vanilla value is 4.0)").Value,
-            out var _fadeTimeAfterMessage
-        )) { fadeTimeAfterMessage = _fadeTimeAfterMessage; };
-        if (float.TryParse(
-            Config.Bind<string?>("Fade Behaviour", "FadeTimeAfterOwnMessage", null, "(default: 2.0) The amount of seconds before the chat fades out after a message is sent by you. (The vanilla value is 2.0)").Value,
-            out var _fadeTimeAfterOwnMessage
-        )) { fadeTimeAfterOwnMessage = _fadeTimeAfterOwnMessage; };
-        if (float.TryParse(
-            Config.Bind<string?>("Fade Behaviour", "FadeTimeAfterUnfocused", null, "(default: 1.0) The amount of seconds before the chat fades out after the chat input is unfocused. (The vanilla value is 1.0)").Value,
-            out var _fadeTimeAfterUnfocused
-        )) { fadeTimeAfterUnfocused = _fadeTimeAfterUnfocused; };
+        ConfigInit();
         log = BepInEx.Logging.Logger.CreateLogSource(modName);
         log.LogInfo($"Loading {modGUID}");
 
@@ -93,13 +41,24 @@ public class Plugin : BaseUnityPlugin {
         var player = StartOfRound.Instance?.localPlayerController;
         if (NetworkManager.Singleton != null && player != null) {
             Patches.fields.TryGetValue(player, out var f);
-            if (f != null && f.scrollContainerRect != null && f.chatTextBgRect != null && f.chatTextRect != null) {
+            if (f != null && f.scrollContainerRect != null && f.chatTextBgRect != null && f.chatTextRect != null && f.chatTextFieldRect != null && f.hudBottomLeftCorner != null) {
+                f.chatTextFieldRect.SetParent(f.hudBottomLeftCorner);
+                f.chatTextBgRect.SetParent(f.hudBottomLeftCorner);
                 f.chatTextRect.SetParent(f.chatTextBgRect.parent, false);
                 Destroy(f.scrollContainerRect.gameObject);
                 Destroy(f.chatTextBgRect.Find("ScrollMask")?.gameObject);
+                Destroy(f.chatContainer?.gameObject);
+            }
+        }
+        foreach (var fields in Patches.fields.Values) {
+            foreach (var action in fields.cleanupActions) {
+                action();
             }
         }
         harmony?.UnpatchSelf();
+        foreach (var action in cleanupActions) {
+            action();
+        }
         #endif
     }
 }
@@ -108,12 +67,17 @@ public class Plugin : BaseUnityPlugin {
 [HarmonyPatch]
 internal class Patches {
     public class CustomFields {
+        public DateTime? connectTime = null;
+        public bool networkReady = false;
         public InputAction? shiftAction = null;
         public InputAction? scrollAction = null;
         public TMPro.TMP_Text? chatText = null;
         public TMPro.TMP_InputField? chatTextField = null;
+        public TMPro.TextMeshProUGUI? chatTextFieldGui = null;
         public float previousChatTextHeight = 0f;
         public float previousScrollPosition = 0f;
+        public RectTransform? hudBottomLeftCorner = null;
+        public RectTransform? chatContainer = null;
         public RectTransform? chatTextBgRect = null;
         public RectTransform? chatTextFieldRect = null;
         public RectTransform? chatTextRect = null;
@@ -124,6 +88,7 @@ internal class Patches {
         public bool? serverHasMod = null;
         public int? serverCharacterLimit = null;
         public bool handlerRegistered = false;
+        public List<Action> cleanupActions = new List<Action>();
     }
 
     // Extra player instance fields
@@ -163,7 +128,6 @@ internal class Patches {
                 f.chatTextField.lineType = TMPro.TMP_InputField.LineType.MultiLineSubmit;
             }
         }
-
         if (f.chatText != null) {
             f.chatText.fontSize = Plugin.DefaultFontSize;
             // If text history approaches the maximum display limit, trim old chat history
@@ -174,6 +138,10 @@ internal class Patches {
                     HUDManager.Instance.ChatMessageHistory.RemoveAt(0);
                 }
             }
+        }
+
+        if (f.chatTextFieldGui != null) {
+            f.chatTextFieldGui.color = Plugin.InputTextColor;
         }
 
         if (f.chatText != null && f.chatTextRect != null && f.chatTextBgRect != null && f.chatTextFieldRect != null) {
@@ -327,8 +295,15 @@ internal class Patches {
     [HarmonyPatch(typeof(PlayerControllerB), "OnDestroy")]
     [HarmonyPostfix]
     private static void OnDestroy(PlayerControllerB __instance) {
-        NetworkManager.Singleton?.CustomMessagingManager?.UnregisterNamedMessageHandler(msgModVersion);
-        NetworkManager.Singleton?.CustomMessagingManager?.UnregisterNamedMessageHandler(msgCharacterLimit);
+        if (IsLocalPlayer(__instance)) {
+            NetworkManager.Singleton?.CustomMessagingManager?.UnregisterNamedMessageHandler(msgModVersion);
+            NetworkManager.Singleton?.CustomMessagingManager?.UnregisterNamedMessageHandler(msgCharacterLimit);
+            if (fields.ContainsKey(__instance)) {
+                foreach (var action in fields[__instance].cleanupActions) {
+                    action();
+                }
+            }
+        }
         fields.Remove(__instance);
     }
 
@@ -342,7 +317,11 @@ internal class Patches {
 
         if (!IsLocalPlayer(__instance)) { return; }
 
-        if (__instance.NetworkManager.IsConnectedClient || __instance.NetworkManager.IsServer) {
+        if (f.hudBottomLeftCorner == null) {
+            f.hudBottomLeftCorner = HUDManager.Instance.HUDContainer.transform.Find("BottomLeftCorner") as RectTransform;
+        }
+
+        if (__instance.NetworkManager.IsConnectedClient) {
             var msgManager = __instance.NetworkManager.CustomMessagingManager;
             if (!f.handlerRegistered) {
                 msgManager.RegisterNamedMessageHandler(msgModVersion, (ulong clientId, FastBufferReader reader) => {
@@ -407,6 +386,9 @@ internal class Patches {
         if (f.chatTextFieldRect == null && f.chatTextField != null) {
             f.chatTextField.TryGetComponent<RectTransform>(out f.chatTextFieldRect);
         }
+        if (f.chatTextFieldGui == null && f.chatTextField != null) {
+            f.chatTextFieldGui = f.chatTextField.transform.Find("Text Area/Text")?.GetComponent<TextMeshProUGUI>();
+        }
         if (f.chatTextRect == null && f.chatText != null) {
             f.chatText.TryGetComponent<RectTransform>(out f.chatTextRect);
         }
@@ -431,6 +413,27 @@ internal class Patches {
                 var map = __instance.playerActions.Movement;
                 f.scrollAction = InputActionSetupExtensions.AddAction(map, $"{Plugin.modGUID}.Scroll", binding: Mouse.current.scroll.path, type: InputActionType.Value);
                 __instance.playerActions.Enable();
+            }
+        }
+
+        if (Plugin.GuiFadeFix) {
+            if (f.chatContainer == null) {
+                var chatContainerObject = new GameObject($"{Plugin.modGUID}.ChatContainer");
+                f.chatContainer = chatContainerObject.AddComponent<RectTransform>();
+                chatContainerObject.AddComponent<CanvasGroup>();
+                f.chatContainer.SetParent(f.hudBottomLeftCorner, false);
+            }
+            if (f.chatTextFieldRect?.parent != f.chatContainer) {
+                f.chatTextFieldRect?.SetParent(f.chatContainer);
+                f.chatTextBgRect?.SetParent(f.chatContainer);
+                HUDManager.Instance!.Chat.canvasGroup = f.chatContainer.GetComponent<CanvasGroup>();
+                f.hudBottomLeftCorner!.GetComponent<CanvasGroup>().alpha = 1f;
+            }
+        } else {
+            if (f.chatTextFieldRect?.parent != f.hudBottomLeftCorner) {
+                f.chatTextFieldRect?.SetParent(f.hudBottomLeftCorner);
+                f.chatTextBgRect?.SetParent(f.hudBottomLeftCorner);
+                HUDManager.Instance!.Chat.canvasGroup = f.hudBottomLeftCorner!.GetComponent<CanvasGroup>();
             }
         }
     }
