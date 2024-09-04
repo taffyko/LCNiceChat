@@ -10,6 +10,8 @@ public partial class Plugin {
     public static float DefaultFontSize { get; private set; }
     public static bool EnlargeChatWindow { get; private set; }
     public static int CharacterLimit { get; private set; }
+    public static float MessageRange { get; private set; }
+    public static bool HearDeadPlayers { get; private set; }
     public static bool EnableTimestamps { get; private set; }
     public static bool ShowScrollbar { get; private set; }
     public static float FadeOpacity { get; private set; }
@@ -17,6 +19,7 @@ public partial class Plugin {
     public static float FadeTimeAfterOwnMessage { get; private set; }
     public static float FadeTimeAfterUnfocused { get; private set; }
     public static bool GuiFadeFix { get; private set; }
+    public static bool SpectatorChatHideOtherHudElements { get; private set; }
     public static UnityEngine.Color InputTextColor { get; private set; }
 
     void ConfigInit() {
@@ -31,6 +34,8 @@ If you enter an invalid value, it will change back to "default" when the game st
         ConfEntry("Chat", nameof(DefaultFontSize), 11.0f, "Font size.", float.TryParse, vanillaValue: 13.0f);
         ConfEntry("Chat", nameof(EnlargeChatWindow), true, "Increases the size of the chat area.", bool.TryParse);
         ConfEntry("Chat", nameof(CharacterLimit), 1000, "Maximum character limit for messages in your lobby.", int.TryParse, hostControlled: true);
+        ConfEntry("Chat", nameof(MessageRange), 25f, "Maximum distance from which messages between living players can be heard without a walkie-talkie.", float.TryParse, hostControlled: true, vanillaValue: 25f);
+        ConfEntry("Chat", nameof(HearDeadPlayers), false, "When enabled, allows living players to hear messages from dead players.", bool.TryParse, hostControlled: true);
         ConfEntry("Chat", nameof(EnableTimestamps), true, "Adds timestamps to messages whenever the clock is visible.", bool.TryParse);
         ConfEntry("Chat", nameof(ShowScrollbar), true, "If false, the scrollbar is permanently hidden even when the chat input is focused.", bool.TryParse);
         ConfEntry("Chat", nameof(InputTextColor), UnityEngine.Color.white, "Default color of text in the input field", ColorUtility.TryParseHtmlString, vanillaValue: vanillaInputTextColor);
@@ -39,6 +44,7 @@ If you enter an invalid value, it will change back to "default" when the game st
         ConfEntry("Fade Behaviour", nameof(FadeTimeAfterOwnMessage), 2.0f, "The amount of seconds before the chat fades out after a message is sent by you.", float.TryParse, vanillaValue: 2.0f);
         ConfEntry("Fade Behaviour", nameof(FadeTimeAfterUnfocused), 1.0f, "The amount of seconds before the chat fades out after the chat input is unfocused.", float.TryParse, vanillaValue: 1.0f);
         ConfEntry("Compatibility", nameof(GuiFadeFix), true, "Workaround to prevent other UI elements (like the indicator from LethalLoudnessMeter) from also fading out when the chat fades", bool.TryParse);
+        ConfEntry("Compatibility", nameof(SpectatorChatHideOtherHudElements), true, "For spectator chat, ensures that only the chat window is shown, and that irrelevant HUD elements (inventory/etc.) are hidden.", bool.TryParse);
     }
 
     delegate bool ParseConfigValue<T>(string input, out T output);

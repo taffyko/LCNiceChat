@@ -34,6 +34,32 @@ public partial class Plugin : BaseUnityPlugin {
 
         // Plugin startup logic
         harmony.PatchAll(Assembly.GetExecutingAssembly());
+        
+        ServerVars.characterLimit = new(
+            "characterLimit",
+            write: (writer, v) => writer.WriteValueSafe(v),
+            read: (FastBufferReader r, out int v) => r.ReadValueSafe(out v),
+            defaultValue: 49
+        );
+        ServerVars.hearDeadPlayers = new(
+            "hearDeadPlayers",
+            write: (writer, v) => writer.WriteValueSafe(v),
+            read: (FastBufferReader r, out bool v) => r.ReadValueSafe(out v),
+            defaultValue: false
+        );
+        ServerVars.messageRange = new(
+            "messageRange",
+            write: (writer, v) => writer.WriteValueSafe(v),
+            read: (FastBufferReader r, out float v) => r.ReadValueSafe(out v),
+            defaultValue: 25f
+        );
+        ServerVars.modVersion = new(
+            "",
+            write: (writer, v) => writer.WriteValueSafe(v),
+            read: (FastBufferReader r, out string v) => r.ReadValueSafe(out v),
+            defaultValue: null!
+        );
+
     }
 
     private void OnDestroy() {
@@ -64,6 +90,12 @@ public partial class Plugin : BaseUnityPlugin {
     }
 }
 
+public static class ServerVars {
+    public static ServerVar<int> characterLimit = null!;
+    public static ServerVar<bool> hearDeadPlayers = null!;
+    public static ServerVar<float> messageRange = null!;
+    public static ServerVar<string> modVersion = null!;
+}
 
 [HarmonyPatch]
 internal class Patches {
@@ -86,9 +118,6 @@ internal class Patches {
         public CanvasGroup? scrollbarCanvasGroup = null;
         public ScrollRect? scroll = null;
         public Scrollbar? scrollbar = null;
-        public bool? serverHasMod = null;
-        public int? serverCharacterLimit = null;
-        public bool handlerRegistered = false;
         public Action? restoreHiddenHudElementsAction = null;
         public List<Action> cleanupActions = new List<Action>();
     }
@@ -123,8 +152,7 @@ internal class Patches {
             if (hud.HUDContainer.GetComponent<CanvasGroup>().alpha == 0f) {
                 hud.HUDAnimator.SetTrigger("revealHud");
                 hud.ClearControlTips();
-                const bool hideHudElements = true; // TODO: add to config
-                if (hideHudElements) {
+                if (Plugin.SpectatorChatHideOtherHudElements) {
                     var hudElements = (HUDElement[])Traverse.Create(hud).Field("HUDElements").GetValue();
                     var bottomMiddle = hud.HUDContainer.transform.Find("BottomMiddle");
 
@@ -146,17 +174,13 @@ internal class Patches {
                 }
             }
         }
-        if (!__instance.isPlayerDead && f.restoreHiddenHudElementsAction != null) {
+        if (f.restoreHiddenHudElementsAction != null && (!__instance.isPlayerDead || !Plugin.SpectatorChatHideOtherHudElements)) {
             f.restoreHiddenHudElementsAction();
             f.restoreHiddenHudElementsAction = null;
         }
 
         if (f.chatTextField != null) {
-            if (f.serverHasMod == true) {
-                f.chatTextField.characterLimit = f.serverCharacterLimit ?? 500;
-            } else {
-                f.chatTextField.characterLimit = 49;
-            }
+            f.chatTextField.characterLimit = ServerVars.characterLimit.Value;
             f.chatTextField.lineLimit = 0;
 
             // Enable "enter-for-linebreak" mode while shift is held
@@ -335,8 +359,6 @@ internal class Patches {
     [HarmonyPostfix]
     private static void OnDestroy(PlayerControllerB __instance) {
         if (IsLocalPlayer(__instance)) {
-            NetworkManager.Singleton?.CustomMessagingManager?.UnregisterNamedMessageHandler(msgModVersion);
-            NetworkManager.Singleton?.CustomMessagingManager?.UnregisterNamedMessageHandler(msgCharacterLimit);
             if (fields.ContainsKey(__instance)) {
                 foreach (var action in fields[__instance].cleanupActions) {
                     action();
@@ -345,9 +367,6 @@ internal class Patches {
         }
         fields.Remove(__instance);
     }
-
-    public const string msgModVersion = Plugin.modGUID;
-    public const string msgCharacterLimit = $"{Plugin.modGUID}.characterLimit";
 
     // Sets up references and handlers as needed, so that the mod can be hot-reloaded at any time
     private static void reload(PlayerControllerB __instance) {
@@ -371,61 +390,14 @@ internal class Patches {
         }
 
         if (__instance.NetworkManager.IsConnectedClient) {
-            var msgManager = __instance.NetworkManager.CustomMessagingManager;
-            if (!f.handlerRegistered) {
-                msgManager.RegisterNamedMessageHandler(msgModVersion, (ulong clientId, FastBufferReader reader) => {
-                    if (__instance.NetworkManager.IsServer) {
-                        // Modded server responds to version inquiries from clients
-                        var writer = new FastBufferWriter(100, Allocator.Temp);
-                        writer.WriteValue(Plugin.modVersion);
-                        msgManager.SendNamedMessage(msgModVersion, clientId, writer);
-                    } else {
-                        // If the server responds, the client knows it has the mod
-                        f.serverHasMod = true;
-                    }
-                });
-                msgManager.RegisterNamedMessageHandler(msgCharacterLimit, (ulong clientId, FastBufferReader reader) => {
-                    if (__instance.NetworkManager.IsServer) {
-                        // Modded server responds to character limit inquiries from clients
-                        var writer = new FastBufferWriter(100, Allocator.Temp);
-                        writer.WriteValue(Plugin.CharacterLimit);
-                        msgManager.SendNamedMessage(msgCharacterLimit, clientId, writer);
-                    } else {
-                        // If the server responds, the client knows the character limit
-                        reader.ReadValue(out int characterLimit);
-                        f.serverCharacterLimit = characterLimit;
-                    }
-                });
-                f.handlerRegistered = true;
-            }
-
-            if (f.serverHasMod == null) {
-                if (__instance.NetworkManager.IsServer) {
-                    // Modded server knows it has the mod
-                    f.serverHasMod = true;
-                } else {
-                    // Connected clients send a message to check whether the server has the mod
-                    var writer = new FastBufferWriter(100, Allocator.Temp);
-                    writer.WriteValue(Plugin.modVersion);
-                    msgManager.SendNamedMessage(msgModVersion, NetworkManager.ServerClientId, writer);
-                    // Until a response is received, assume vanilla
-                    f.serverHasMod = false;
-                }
-            }
-
-            if (f.serverHasMod == true && f.serverCharacterLimit == null) {
-                if (__instance.NetworkManager.IsServer) {
-                    // Modded server knows its own character limit
-                    f.serverCharacterLimit = Plugin.CharacterLimit;
-                } else {
-                    // Connected clients send a message to ask the server what the configured character limit is
-                    var writer = new FastBufferWriter(0, Allocator.Temp);
-                    msgManager.SendNamedMessage(msgCharacterLimit, NetworkManager.ServerClientId, writer);
-                    // Until a response is received, assume the v1.0.0 default of 500 characters
-                    f.serverCharacterLimit = 500;
-                }
+            if (__instance.NetworkManager.IsServer) {
+                ServerVars.characterLimit.Value = Plugin.CharacterLimit;
+                ServerVars.modVersion.Value = Plugin.modVersion;
+                ServerVars.hearDeadPlayers.Value = Plugin.HearDeadPlayers;
+                ServerVars.messageRange.Value = Plugin.MessageRange;
             }
         }
+
         if (f.chatTextField == null) {
             f.chatTextField = HUDManager.Instance?.chatTextField;
         }
@@ -512,17 +484,23 @@ internal class Patches {
     public static string GetChatMessageNameOpeningTag() {
         var color = "#FF0000";
         string text = "";
-        if (Plugin.EnableTimestamps && TimeOfDay.Instance.currentDayTimeStarted && HUDManager.Instance?.clockNumber != null && HUDManager.Instance.clockNumber.IsActive() && HUDManager.Instance.Clock.targetAlpha > 0f) {
+        if (
+            Plugin.EnableTimestamps && TimeOfDay.Instance.currentDayTimeStarted && HUDManager.Instance?.clockNumber != null
+            && (
+                (HUDManager.Instance.clockNumber.IsActive() && HUDManager.Instance.Clock.targetAlpha > 0f)
+                || StartOfRound.Instance.localPlayerController.isPlayerDead
+            )
+        ) {
             text += $"<color=#7069ff>[{HUDManager.Instance.clockNumber.text.Replace("\n", "")}] </color>";
         }
 
         {
             if (messageContext != null) {
                 if (messageContext.senderDead) {
-                    text += $"<color=#AEAEAE>*DEAD* ";
+                    text += $"<color=#878787>*DEAD* ";
                     goto next;
                 } else if (messageContext.walkie) {
-                    text += $"<color=#0000DD>*WALKIE* ";
+                    text += $"<color=#006600>*WALKIE* ";
                     goto next;
                 }
             }
@@ -590,18 +568,12 @@ internal class Patches {
         var recipient = StartOfRound.Instance.localPlayerController;
         if (sender == null || recipient == null) { return true; }
         
-        // TODO: Config
-        const float maxDistance = 25f; 
-        
-        // TODO: Config
-        const bool hearDeadPlayers = false;
-        
         var walkie = sender.holdingWalkieTalkie && recipient.holdingWalkieTalkie;
         
         var send = false;
         {
             if (sender.isPlayerDead) {
-                if (hearDeadPlayers || recipient.isPlayerDead) {
+                if (ServerVars.hearDeadPlayers.Value || recipient.isPlayerDead) {
                     send = true; goto end;
                 } else {
                     goto end;
@@ -612,7 +584,7 @@ internal class Patches {
                 send = true; goto end;
             }
 
-            var inRange = (Vector3.Distance(sender.transform.position, recipient.transform.position) > maxDistance);
+            var inRange = (Vector3.Distance(sender.transform.position, recipient.transform.position) > ServerVars.messageRange.Value);
             if (inRange) {
                 send = true; goto end;
             }
@@ -740,6 +712,18 @@ internal class Patches {
                 continue;
             }
             yield return instruction;
+        }
+    }
+    
+    
+    [HarmonyPatch(typeof(HUDManager), "AddTextToChatOnServer")]
+    [HarmonyPrefix]
+    private static void AddTextToChatOnServer_Prefix(HUDManager __instance, int playerId) {
+        if (playerId >= 0 && playerId < StartOfRound.Instance.allPlayerScripts.Length) {
+            if (IsLocalPlayer(StartOfRound.Instance.allPlayerScripts[playerId])) {
+                // Set message context for formatting own messages
+                CanHearMessage(playerId);
+            }
         }
     }
 }
