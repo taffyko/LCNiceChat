@@ -1,2 +1,2 @@
 Set-Location "$PSScriptRoot\.."
-& "..\..\Lethal Company.exe" --doorstop-enable false --lan $args
+& "..\..\Lethal Company.exe" --doorstop-enable false

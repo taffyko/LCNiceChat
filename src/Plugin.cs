@@ -14,16 +14,17 @@ using System;
 using System.Linq;
 using TMPro;
 
+
 namespace NiceChat;
 
 [BepInPlugin(modGUID, modName, modVersion)]
 public partial class Plugin : BaseUnityPlugin {
-    public const string modGUID = "taffyko.NiceChat";
+    public const string modGUID = PluginInfo.PLUGIN_GUID;
     public const string modName = PluginInfo.PLUGIN_NAME;
     public const string modVersion = PluginInfo.PLUGIN_VERSION;
     
     private readonly Harmony harmony = new Harmony(modGUID);
-    public static ManualLogSource? log;
+    public static ManualLogSource log = null!;
     internal static List<Action> cleanupActions = new List<Action>();
 
     private void Awake() {
@@ -88,6 +89,7 @@ internal class Patches {
         public bool? serverHasMod = null;
         public int? serverCharacterLimit = null;
         public bool handlerRegistered = false;
+        public Action? restoreHiddenHudElementsAction = null;
         public List<Action> cleanupActions = new List<Action>();
     }
 
@@ -104,13 +106,50 @@ internal class Patches {
     private static void Player_Awake(PlayerControllerB __instance) {
         reload(__instance);
     }
-
+    
+    public static (HUDElement, float originalOpacity)[] hiddenElements = new (HUDElement, float)[] {};
+    
     [HarmonyPatch(typeof(PlayerControllerB), "Update")]
     [HarmonyPostfix]
     private static void Player_Update(PlayerControllerB __instance) {
         reload(__instance);
         if (!IsLocalPlayer(__instance)) { return; }
+        if (HUDManager.Instance == null) { return; }
         var f = fields[__instance];
+    
+        if (__instance.isPlayerDead && f.restoreHiddenHudElementsAction == null) {
+            // Display chat while player is dead
+            var hud = HUDManager.Instance;
+            if (hud.HUDContainer.GetComponent<CanvasGroup>().alpha == 0f) {
+                hud.HUDAnimator.SetTrigger("revealHud");
+                hud.ClearControlTips();
+                const bool hideHudElements = true; // TODO: add to config
+                if (hideHudElements) {
+                    var hudElements = (HUDElement[])Traverse.Create(hud).Field("HUDElements").GetValue();
+                    var bottomMiddle = hud.HUDContainer.transform.Find("BottomMiddle");
+
+                    f.restoreHiddenHudElementsAction = () => {
+                        foreach (var el in hudElements) {
+                            if (el != hud.Chat) {
+                                hud.PingHUDElement(el, 0f, 0f, el.targetAlpha);
+                            }
+                        }
+                        if (bottomMiddle != null) { bottomMiddle.gameObject.SetActive(true); }
+                    };
+
+                    foreach (var el in hudElements) {
+                        if (el != hud.Chat) {
+                            hud.PingHUDElement(el, 0f, 0f, 0f);
+                        }
+                    }
+                    if (bottomMiddle != null) { bottomMiddle.gameObject.SetActive(false); }
+                }
+            }
+        }
+        if (!__instance.isPlayerDead && f.restoreHiddenHudElementsAction != null) {
+            f.restoreHiddenHudElementsAction();
+            f.restoreHiddenHudElementsAction = null;
+        }
 
         if (f.chatTextField != null) {
             if (f.serverHasMod == true) {
@@ -312,8 +351,18 @@ internal class Patches {
 
     // Sets up references and handlers as needed, so that the mod can be hot-reloaded at any time
     private static void reload(PlayerControllerB __instance) {
-        if (!fields.ContainsKey(__instance)) { fields[__instance] = new CustomFields(); }
-        var f = fields[__instance];
+        CustomFields f;
+        if (!fields.ContainsKey(__instance)) {
+            fields[__instance] = new CustomFields();
+            f = fields[__instance];
+            f.cleanupActions.Add(() => {
+                if (f.restoreHiddenHudElementsAction != null) {
+                    f.restoreHiddenHudElementsAction();
+                }
+            });
+        } else {
+            f = fields[__instance];
+        }
 
         if (!IsLocalPlayer(__instance)) { return; }
 
@@ -460,15 +509,37 @@ internal class Patches {
         }
     }
 
-    public static string GetChatMessageNameColorTag() {
+    public static string GetChatMessageNameOpeningTag() {
         var color = "#FF0000";
-        var timestamp = "";
+        string text = "";
         if (Plugin.EnableTimestamps && TimeOfDay.Instance.currentDayTimeStarted && HUDManager.Instance?.clockNumber != null && HUDManager.Instance.clockNumber.IsActive() && HUDManager.Instance.Clock.targetAlpha > 0f) {
-            timestamp = $"<color=#7069ff>[{HUDManager.Instance.clockNumber.text.Replace("\n", "")}] </color>";
+            text += $"<color=#7069ff>[{HUDManager.Instance.clockNumber.text.Replace("\n", "")}] </color>";
         }
-        return $"{timestamp}<color={color}>";
+
+        {
+            if (messageContext != null) {
+                if (messageContext.senderDead) {
+                    text += $"<color=#AEAEAE>*DEAD* ";
+                    goto next;
+                } else if (messageContext.walkie) {
+                    text += $"<color=#0000DD>*WALKIE* ";
+                    goto next;
+                }
+            }
+            text += $"<color={color}>";
+        }
+        next:
+
+        messageContext = null;
+        return text;
     }
-    static MethodInfo getChatMessageNameColorTag = typeof(Patches).GetMethod(nameof(GetChatMessageNameColorTag));
+
+    public static string GetChatMessageNameClosingTag() {
+        return "</color>: <color=#FFFF00>";
+    }
+
+    static MethodInfo MethodInfo_GetChatMessageNameOpeningTag = typeof(Patches).GetMethod(nameof(GetChatMessageNameOpeningTag));
+    static MethodInfo MethodInfo_GetChatMessageNameClosingTag = typeof(Patches).GetMethod(nameof(GetChatMessageNameClosingTag));
     static MethodInfo stringEqual = typeof(string).GetMethod("op_Equality", new[] { typeof(string), typeof(string) });
 
 
@@ -503,6 +574,85 @@ internal class Patches {
 
         foreach (var instruction in instructions) {
             yield return instruction;
+        }
+    }
+    
+    record MessageContext(int senderId, bool walkie, bool senderDead);
+    static MessageContext? messageContext = null;
+        
+    public static bool CanHearMessage(int senderId) {
+        // defensive
+        if (senderId < 0) { return true; }
+        if (HUDManager.Instance == null) { return true; }
+        if (HUDManager.Instance.playersManager.allPlayerScripts.Length <= senderId) { return true; }
+
+        var sender = HUDManager.Instance.playersManager.allPlayerScripts[senderId];
+        var recipient = StartOfRound.Instance.localPlayerController;
+        if (sender == null || recipient == null) { return true; }
+        
+        // TODO: Config
+        const float maxDistance = 25f; 
+        
+        // TODO: Config
+        const bool hearDeadPlayers = false;
+        
+        var walkie = sender.holdingWalkieTalkie && recipient.holdingWalkieTalkie;
+        
+        var send = false;
+        {
+            if (sender.isPlayerDead) {
+                if (hearDeadPlayers || recipient.isPlayerDead) {
+                    send = true; goto end;
+                } else {
+                    goto end;
+                }
+            }
+            
+            if (walkie) {
+                send = true; goto end;
+            }
+
+            var inRange = (Vector3.Distance(sender.transform.position, recipient.transform.position) > maxDistance);
+            if (inRange) {
+                send = true; goto end;
+            }
+        }
+        
+        end:
+        if (send) {
+            messageContext = new (senderId, walkie, sender.isPlayerDead);
+        }
+        return send;
+    }
+    
+    static MethodInfo MethodInfo_Vector3_Distance = typeof(Vector3).GetMethod(nameof(Vector3.Distance));
+    static MethodInfo MethodInfo_PlayerCanHearMessage = typeof(Patches).GetMethod(nameof(CanHearMessage));
+
+    [HarmonyPatch(typeof(HUDManager), "AddPlayerChatMessageClientRpc")]
+    [HarmonyTranspiler]
+    private static IEnumerable<CodeInstruction> transpiler_CanHearMessageOverride(IEnumerable<CodeInstruction> instructions, ILGenerator generator) {
+        bool deadCheckFound = false;
+        bool distanceCheckFound = false;
+        using (var e = instructions.GetEnumerator()) {
+            while (e.MoveNext()) {
+                if (!deadCheckFound && e.Current.opcode == OpCodes.Ldfld && (FieldInfo)e.Current.operand == FieldInfo_isPlayerDead) {
+                    deadCheckFound = true;
+                    // Yield next 5 instructions
+                    for (int i = 0; i < 5; i++) { yield return e.Current; e.MoveNext(); }
+                    // Replace early-return with no-op
+                    yield return new CodeInstruction(OpCodes.Nop);
+                    e.MoveNext();
+                } else if (!distanceCheckFound && e.Current.opcode == OpCodes.Call && (MethodInfo)e.Current.operand == MethodInfo_Vector3_Distance) {
+                    distanceCheckFound = true;
+                    // Yield next 4 instructions
+                    for (int i = 0; i < 4; i++) { yield return e.Current; e.MoveNext(); }
+                    // Hijack early-return conditional
+                    yield return new CodeInstruction(OpCodes.Pop);
+                    yield return new CodeInstruction(OpCodes.Ldarg_2); // playerId
+                    yield return new CodeInstruction(OpCodes.Call, MethodInfo_PlayerCanHearMessage);
+                }
+                yield return e.Current;
+            }
         }
     }
 
@@ -548,10 +698,10 @@ internal class Patches {
             } else if (instruction.opcode == OpCodes.Ldstr) {
                 switch ((string)instruction.operand) {
                     case "<color=#FF0000>":
-                        yield return new CodeInstruction(OpCodes.Call, getChatMessageNameColorTag);
+                        yield return new CodeInstruction(OpCodes.Call, MethodInfo_GetChatMessageNameOpeningTag);
                         continue;
                     case "</color>: <color=#FFFF00>'":
-                        yield return new CodeInstruction(OpCodes.Ldstr, "</color>: <color=#FFFF00>");
+                        yield return new CodeInstruction(OpCodes.Call, MethodInfo_GetChatMessageNameClosingTag);
                         continue;
                     case "'</color>":
                         yield return new CodeInstruction(OpCodes.Ldstr, "</color>");
@@ -566,22 +716,30 @@ internal class Patches {
         return Plugin.CharacterLimit + 1;
     }
     static MethodInfo getCharacterLimit = typeof(Patches).GetMethod(nameof(GetCharacterLimit));
+    static FieldInfo FieldInfo_isPlayerDead = typeof(PlayerControllerB).GetField(nameof(PlayerControllerB.isPlayerDead));
+
 
     [HarmonyPatch(typeof(HUDManager), "SubmitChat_performed")]
+    [HarmonyPatch(typeof(HUDManager), "EnableChat_performed")]
     [HarmonyPatch(typeof(HUDManager), "AddPlayerChatMessageServerRpc")]
     [HarmonyTranspiler]
     private static IEnumerable<CodeInstruction> transpiler_SubmitChat_performed(IEnumerable<CodeInstruction> instructions) {
+        var foundCharacterLimit = false;
+        var foundPlayerDeadCheck = false;
         foreach (var instruction in instructions) {
-            var found = false;
-            if (instruction.opcode == OpCodes.Ldc_I4_S) {
+            if (!foundCharacterLimit && instruction.opcode == OpCodes.Ldc_I4_S) {
                 if ((sbyte)instruction.operand == 50) {
-                    found = true;
+                    foundCharacterLimit = true;
                     yield return new CodeInstruction(OpCodes.Call, getCharacterLimit);
+                    continue;
                 }
+            } else if (!foundPlayerDeadCheck && instruction.opcode == OpCodes.Ldfld && (FieldInfo)instruction.operand == FieldInfo_isPlayerDead) {
+                foundPlayerDeadCheck = true;
+                yield return new CodeInstruction(OpCodes.Pop);
+                yield return new CodeInstruction(OpCodes.Ldc_I4_0);
+                continue;
             }
-            if (!found) {
-                yield return instruction;
-            }
+            yield return instruction;
         }
     }
 }
