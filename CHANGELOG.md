@@ -1,3 +1,12 @@
+# 1.2.6
+(Targeting v62/v64)
+- The range at which players can hear each other is now customizable by the host.
+- **Dead, spectating players** can now chat with one another.
+	- Living players cannot hear dead players, unless the host enables it.
+	- The names of dead players are color-coded grey.
+- When both you and the sender of a message are holding an active walkie-talkie, the name is color-coded green.
+	- This is to clarify a vanilla feature where any players holding active walkies can hear each other's messages at any distance.
+
 # 1.2.5
 - Fixes an issue where the character limit would not increase for clients when playing with TooManyEmotes
 - Chat now fully fades away by default

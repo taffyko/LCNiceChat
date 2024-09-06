@@ -10,7 +10,7 @@ if ($Release) {
 	dotnet build -c Release
 	if (!$?) { exit 1 }
 	Copy-Item ".\bin\Release\netstandard2.1\$name.dll" "..\..\BepInEx\plugins\"
-	Copy-Item ".\bin\Release\netstandard2.1\$name.pdb" "..\..\BepInEx\plugins\"
+	Copy-Item ".\bin\Release\netstandard2.1\$name.pdb" "..\..\BepInEx\plugins\" -ErrorAction SilentlyContinue
 	Remove-Item "..\..\BepInEx\scripts\$name*.dll" -ErrorAction SilentlyContinue
 	Remove-Item "..\..\BepInEx\scripts\$name*.pdb" -ErrorAction SilentlyContinue
 } else {
@@ -18,7 +18,7 @@ if ($Release) {
 	if (!$?) { exit 1 }
 	$null = mkdir -Force "..\..\BepInEx\scripts"
 	Copy-Item ".\bin\Debug\netstandard2.1\$name.dll" "..\..\BepInEx\scripts\"
-	Copy-Item ".\bin\Debug\netstandard2.1\$name.pdb" "..\..\BepInEx\scripts\"
+	Copy-Item ".\bin\Debug\netstandard2.1\$name.pdb" "..\..\BepInEx\scripts\" -ErrorAction SilentlyContinue
 	Remove-Item "..\..\BepInEx\plugins\$name.dll" -ErrorAction SilentlyContinue
 	Remove-Item "..\..\BepInEx\plugins\$name.pdb" -ErrorAction SilentlyContinue
 }

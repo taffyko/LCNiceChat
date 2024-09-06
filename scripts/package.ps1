@@ -10,7 +10,7 @@ $version = $csproj.Project.PropertyGroup.Version
 if (Test-Path BepInEx) { Remove-Item -Recurse BepInEx }
 mkdir -Force BepInEx\plugins
 Copy-Item "bin/Release/netstandard2.1/$dllName.dll" "BepInEx/plugins"
-Copy-Item "bin/Release/netstandard2.1/$dllName.pdb" "BepInEx/plugins"
+Copy-Item "bin/Release/netstandard2.1/$dllName.pdb" "BepInEx/plugins" -ErrorAction SilentlyContinue
 
 Compress-Archive -Force -Path @(
 	"manifest.json",

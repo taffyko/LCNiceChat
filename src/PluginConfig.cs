@@ -13,6 +13,7 @@ public partial class Plugin {
     public static float MessageRange { get; private set; }
     public static bool HearDeadPlayers { get; private set; }
     public static bool EnableTimestamps { get; private set; }
+    public static bool TagMessageStatus { get; private set; }
     public static bool ShowScrollbar { get; private set; }
     public static float FadeOpacity { get; private set; }
     public static float FadeTimeAfterMessage { get; private set; }
@@ -37,6 +38,7 @@ If you enter an invalid value, it will change back to "default" when the game st
         ConfEntry("Chat", nameof(MessageRange), 25f, "Maximum distance from which messages between living players can be heard without a walkie-talkie.", float.TryParse, hostControlled: true, vanillaValue: 25f);
         ConfEntry("Chat", nameof(HearDeadPlayers), false, "When enabled, allows living players to hear messages from dead players.", bool.TryParse, hostControlled: true);
         ConfEntry("Chat", nameof(EnableTimestamps), true, "Adds timestamps to messages whenever the clock is visible.", bool.TryParse);
+        ConfEntry("Chat", nameof(TagMessageStatus), false, "Adds tags like *WALKIE* and *DEAD* to messages in addition to the color-coding.", bool.TryParse);
         ConfEntry("Chat", nameof(ShowScrollbar), true, "If false, the scrollbar is permanently hidden even when the chat input is focused.", bool.TryParse);
         ConfEntry("Chat", nameof(InputTextColor), UnityEngine.Color.white, "Default color of text in the input field", ColorUtility.TryParseHtmlString, vanillaValue: vanillaInputTextColor);
         ConfEntry("Fade Behaviour", nameof(FadeOpacity), 0.0f, "The opacity of the chat when it fades from inactivity. 0.0 makes the chat fade away completely.", float.TryParse, vanillaValue: 0.2f);

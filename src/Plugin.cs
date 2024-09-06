@@ -19,7 +19,7 @@ namespace NiceChat;
 
 [BepInPlugin(modGUID, modName, modVersion)]
 public partial class Plugin : BaseUnityPlugin {
-    public const string modGUID = PluginInfo.PLUGIN_GUID;
+    public const string modGUID = "taffyko.NiceChat";
     public const string modName = PluginInfo.PLUGIN_NAME;
     public const string modVersion = PluginInfo.PLUGIN_VERSION;
     
@@ -31,9 +31,6 @@ public partial class Plugin : BaseUnityPlugin {
         ConfigInit();
         log = BepInEx.Logging.Logger.CreateLogSource(modName);
         log.LogInfo($"Loading {modGUID}");
-
-        // Plugin startup logic
-        harmony.PatchAll(Assembly.GetExecutingAssembly());
         
         ServerVars.characterLimit = new(
             "characterLimit",
@@ -60,6 +57,7 @@ public partial class Plugin : BaseUnityPlugin {
             defaultValue: null!
         );
 
+        harmony.PatchAll(Assembly.GetExecutingAssembly());
     }
 
     private void OnDestroy() {
@@ -146,35 +144,47 @@ internal class Patches {
         if (HUDManager.Instance == null) { return; }
         var f = fields[__instance];
     
-        if (__instance.isPlayerDead && f.restoreHiddenHudElementsAction == null) {
+        if (__instance.isPlayerDead) {
             // Display chat while player is dead
             var hud = HUDManager.Instance;
             if (hud.HUDContainer.GetComponent<CanvasGroup>().alpha == 0f) {
                 hud.HUDAnimator.SetTrigger("revealHud");
                 hud.ClearControlTips();
-                if (Plugin.SpectatorChatHideOtherHudElements) {
-                    var hudElements = (HUDElement[])Traverse.Create(hud).Field("HUDElements").GetValue();
-                    var bottomMiddle = hud.HUDContainer.transform.Find("BottomMiddle");
+            }
+            if (Plugin.SpectatorChatHideOtherHudElements && f.restoreHiddenHudElementsAction == null) {
+                var hudElements = (HUDElement[])Traverse.Create(hud).Field("HUDElements").GetValue();
+                var bottomMiddle = hud.HUDContainer.transform.Find("BottomMiddle");
 
-                    f.restoreHiddenHudElementsAction = () => {
-                        foreach (var el in hudElements) {
-                            if (el != hud.Chat) {
-                                hud.PingHUDElement(el, 0f, 0f, el.targetAlpha);
-                            }
-                        }
-                        if (bottomMiddle != null) { bottomMiddle.gameObject.SetActive(true); }
-                    };
-
-                    foreach (var el in hudElements) {
+                var hudElementsAlphas = hudElements.Select(item => {
+                    #if DEBUG
+                    Plugin.log.LogInfo($"{item.canvasGroup.name}: {item.canvasGroup.alpha} / {item.targetAlpha}");
+                    #endif
+                    return (item, Mathf.Max(item.targetAlpha, item.canvasGroup.alpha));
+                }).ToArray();
+                #if DEBUG
+                Plugin.log.LogInfo("Setting HUD restore");
+                #endif
+                f.restoreHiddenHudElementsAction = () => {
+                    foreach (var (el, alpha) in hudElementsAlphas) {
                         if (el != hud.Chat) {
-                            hud.PingHUDElement(el, 0f, 0f, 0f);
+                            hud.PingHUDElement(el, 0f, alpha, alpha);
                         }
                     }
-                    if (bottomMiddle != null) { bottomMiddle.gameObject.SetActive(false); }
+                    if (bottomMiddle != null) { bottomMiddle.gameObject.SetActive(true); }
+                };
+
+                foreach (var el in hudElements) {
+                    if (el != hud.Chat) {
+                        hud.PingHUDElement(el, 0f, 0f, 0f);
+                    }
                 }
+                if (bottomMiddle != null) { bottomMiddle.gameObject.SetActive(false); }
             }
         }
         if (f.restoreHiddenHudElementsAction != null && (!__instance.isPlayerDead || !Plugin.SpectatorChatHideOtherHudElements)) {
+            #if DEBUG
+            Plugin.log.LogInfo("Executing HUD restore");
+            #endif
             f.restoreHiddenHudElementsAction();
             f.restoreHiddenHudElementsAction = null;
         }
@@ -462,7 +472,7 @@ internal class Patches {
     // Disable submitting chat messages when shift is held
     [HarmonyPatch(typeof(HUDManager), "SubmitChat_performed")]
     [HarmonyPrefix]
-    private static bool SubmitChat_performed() {
+    private static bool SubmitChat_performed_Prefix() {
         return !(fields[StartOfRound.Instance.localPlayerController].shiftAction?.IsPressed()) ?? true;
     }
 
@@ -497,10 +507,16 @@ internal class Patches {
         {
             if (messageContext != null) {
                 if (messageContext.senderDead) {
-                    text += $"<color=#878787>*DEAD* ";
+                    text += $"<color=#878787>";
+                    if (Plugin.TagMessageStatus) {
+                        text += "*DEAD* ";
+                    }
                     goto next;
                 } else if (messageContext.walkie) {
-                    text += $"<color=#006600>*WALKIE* ";
+                    text += $"<color=#00AA00>";
+                    if (Plugin.TagMessageStatus) {
+                        text += "*WALKIE* ";
+                    }
                     goto next;
                 }
             }
@@ -557,48 +573,66 @@ internal class Patches {
     
     record MessageContext(int senderId, bool walkie, bool senderDead);
     static MessageContext? messageContext = null;
-        
-    public static bool CanHearMessage(int senderId) {
+    
+    static bool PlayerCanHearMessage(int senderId, int recipientId, out MessageContext? messageContext) {
+        messageContext = null;
         // defensive
         if (senderId < 0) { return true; }
         if (HUDManager.Instance == null) { return true; }
-        if (HUDManager.Instance.playersManager.allPlayerScripts.Length <= senderId) { return true; }
-
+        if (
+            HUDManager.Instance.playersManager.allPlayerScripts.Length <= senderId
+            || HUDManager.Instance.playersManager.allPlayerScripts.Length <= recipientId
+        ) { return true; }
         var sender = HUDManager.Instance.playersManager.allPlayerScripts[senderId];
-        var recipient = StartOfRound.Instance.localPlayerController;
+        var recipient = HUDManager.Instance.playersManager.allPlayerScripts[recipientId];
         if (sender == null || recipient == null) { return true; }
         
         var walkie = sender.holdingWalkieTalkie && recipient.holdingWalkieTalkie;
-        
-        var send = false;
+
+        messageContext = new (senderId, walkie, sender.isPlayerDead);
+
         {
+            if (recipient.isPlayerDead) {
+                return true;
+            }
+
             if (sender.isPlayerDead) {
                 if (ServerVars.hearDeadPlayers.Value || recipient.isPlayerDead) {
-                    send = true; goto end;
+                    return true;
                 } else {
-                    goto end;
+                    return false;
                 }
             }
             
             if (walkie) {
-                send = true; goto end;
+                return true;
             }
 
-            var inRange = (Vector3.Distance(sender.transform.position, recipient.transform.position) > ServerVars.messageRange.Value);
+            var inRange = Vector3.Distance(sender.transform.position, recipient.transform.position) <= ServerVars.messageRange.Value;
             if (inRange) {
-                send = true; goto end;
+                return true;
             }
         }
-        
-        end:
+        return false;
+    }
+
+    public static bool RecipientCanHear(int recipientId) {
+        if (StartOfRound.Instance.localPlayerController.isPlayerDead) {
+            return true; // don't show message range warning if dead
+        }
+        return PlayerCanHearMessage((int)StartOfRound.Instance.localPlayerController.playerClientId, recipientId, out var _);
+    }
+
+    public static bool CanHearPreflight(int senderId) {
+        var send = PlayerCanHearMessage(senderId, (int)StartOfRound.Instance.localPlayerController.playerClientId, out var newMessageContext);
         if (send) {
-            messageContext = new (senderId, walkie, sender.isPlayerDead);
+           messageContext = newMessageContext;
         }
         return send;
     }
     
     static MethodInfo MethodInfo_Vector3_Distance = typeof(Vector3).GetMethod(nameof(Vector3.Distance));
-    static MethodInfo MethodInfo_PlayerCanHearMessage = typeof(Patches).GetMethod(nameof(CanHearMessage));
+    static MethodInfo MethodInfo_CanHearPreflight = typeof(Patches).GetMethod(nameof(CanHearPreflight));
 
     [HarmonyPatch(typeof(HUDManager), "AddPlayerChatMessageClientRpc")]
     [HarmonyTranspiler]
@@ -616,12 +650,13 @@ internal class Patches {
                     e.MoveNext();
                 } else if (!distanceCheckFound && e.Current.opcode == OpCodes.Call && (MethodInfo)e.Current.operand == MethodInfo_Vector3_Distance) {
                     distanceCheckFound = true;
-                    // Yield next 4 instructions
-                    for (int i = 0; i < 4; i++) { yield return e.Current; e.MoveNext(); }
-                    // Hijack early-return conditional
+                    // Skip next 4 instructions
                     yield return new CodeInstruction(OpCodes.Pop);
+                    yield return new CodeInstruction(OpCodes.Pop);
+                    for (int i = 0; i < 4; i++) { e.MoveNext(); }
+                    // Hijack early-return conditional
                     yield return new CodeInstruction(OpCodes.Ldarg_2); // playerId
-                    yield return new CodeInstruction(OpCodes.Call, MethodInfo_PlayerCanHearMessage);
+                    yield return new CodeInstruction(OpCodes.Call, MethodInfo_CanHearPreflight);
                 }
                 yield return e.Current;
             }
@@ -690,12 +725,11 @@ internal class Patches {
     static MethodInfo getCharacterLimit = typeof(Patches).GetMethod(nameof(GetCharacterLimit));
     static FieldInfo FieldInfo_isPlayerDead = typeof(PlayerControllerB).GetField(nameof(PlayerControllerB.isPlayerDead));
 
-
     [HarmonyPatch(typeof(HUDManager), "SubmitChat_performed")]
     [HarmonyPatch(typeof(HUDManager), "EnableChat_performed")]
     [HarmonyPatch(typeof(HUDManager), "AddPlayerChatMessageServerRpc")]
     [HarmonyTranspiler]
-    private static IEnumerable<CodeInstruction> transpiler_SubmitChat_performed(IEnumerable<CodeInstruction> instructions) {
+    private static IEnumerable<CodeInstruction> transpiler_GeneralOverrides(IEnumerable<CodeInstruction> instructions) {
         var foundCharacterLimit = false;
         var foundPlayerDeadCheck = false;
         foreach (var instruction in instructions) {
@@ -714,15 +748,35 @@ internal class Patches {
             yield return instruction;
         }
     }
-    
-    
+
+    [HarmonyPatch(typeof(HUDManager), "SubmitChat_performed")]
+    [HarmonyTranspiler]
+    private static IEnumerable<CodeInstruction> transpiler_SubmitChat_performed(IEnumerable<CodeInstruction> instructions, ILGenerator generator) {
+        bool distanceCheckFound = false;
+        using (var e = instructions.GetEnumerator()) {
+            while (e.MoveNext()) {
+                if (!distanceCheckFound && e.Current.opcode == OpCodes.Call && (MethodInfo)e.Current.operand == MethodInfo_Vector3_Distance) {
+                    distanceCheckFound = true;
+                    // Skip next 12 instructions
+                    yield return new CodeInstruction(OpCodes.Pop);
+                    yield return new CodeInstruction(OpCodes.Pop);
+                    for (int i = 0; i < 12; i++) { e.MoveNext(); }
+                    // Hijack conditional jump
+                    yield return new CodeInstruction(OpCodes.Ldloc_0); // recipient id
+                    yield return new CodeInstruction(OpCodes.Call, typeof(Patches).GetMethod(nameof(Patches.RecipientCanHear)));
+                }
+                yield return e.Current;
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(HUDManager), "AddTextToChatOnServer")]
     [HarmonyPrefix]
     private static void AddTextToChatOnServer_Prefix(HUDManager __instance, int playerId) {
         if (playerId >= 0 && playerId < StartOfRound.Instance.allPlayerScripts.Length) {
             if (IsLocalPlayer(StartOfRound.Instance.allPlayerScripts[playerId])) {
                 // Set message context for formatting own messages
-                CanHearMessage(playerId);
+                CanHearPreflight(playerId);
             }
         }
     }
