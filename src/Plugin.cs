@@ -678,6 +678,10 @@ internal class Patches {
         return false;
     }
 
+    public static int _GetMaxMessageCount() {
+        return Plugin.MaxMessageHistory;
+    }
+
 
     [HarmonyPatch(typeof(HUDManager), "AddChatMessage")]
     [HarmonyTranspiler]
@@ -687,7 +691,7 @@ internal class Patches {
         foreach (var instruction in instructions) {
             if (!foundMaxMessageCount && instruction.opcode == OpCodes.Ldc_I4_4) {
                 // Remove chat message history limit of 4
-                yield return new CodeInstruction(OpCodes.Ldc_I4, int.MaxValue);
+                yield return new CodeInstruction(OpCodes.Call, typeof(Patches).GetMethod(nameof(_GetMaxMessageCount)));
                 foundMaxMessageCount = true;
                 continue;
             } else if (!foundPreviousMessageComparison && instruction.opcode == OpCodes.Call && instruction.operand == (object)stringEqual) {

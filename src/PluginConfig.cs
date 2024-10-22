@@ -7,6 +7,7 @@ using UnityEngine.UIElements;
 namespace NiceChat;
 
 public partial class Plugin {
+    public static int MaxMessageHistory { get; private set; }
     public static float DefaultFontSize { get; private set; }
     public static bool EnlargeChatWindow { get; private set; }
     public static int CharacterLimit { get; private set; }
@@ -32,6 +33,7 @@ See https://github.com/taffyko/LCNiceChat/issues/3 for more information.
 If you enter an invalid value, it will change back to "default" when the game starts.
 """);
         ColorUtility.TryParseHtmlString("#585ed1d4", out var vanillaInputTextColor);
+        ConfEntry("Chat", nameof(MaxMessageHistory), 15, "Set the maximum number of messages in history before the oldest messages begin to disappear (NOTE: Long message histories can negatively impact performance)", int.TryParse, vanillaValue: 4);
         ConfEntry("Chat", nameof(DefaultFontSize), 11.0f, "Font size.", float.TryParse, vanillaValue: 13.0f);
         ConfEntry("Chat", nameof(EnlargeChatWindow), true, "Increases the size of the chat area.", bool.TryParse);
         ConfEntry("Chat", nameof(CharacterLimit), 1000, "Maximum character limit for messages in your lobby.", int.TryParse, hostControlled: true);

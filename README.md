@@ -1,7 +1,7 @@
 All features work client-side unless otherwise mentioned.
 
 - Can now **scroll** through chat history (once there's enough history, just scroll with mousewheel while the chat input is active!)
-	- Chat history is no longer limited to 4 messages
+	- Chat history is no longer limited to 4 messages (defaults to 15, can be increased further in config)
 	- A scrollbar shows your position in history (can be disabled in config)
 - **Dead, spectating players** can now chat with one another.
 	- NOTE: For this, the mod must be installed on the host.

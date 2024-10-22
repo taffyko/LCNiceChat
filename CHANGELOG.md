@@ -1,3 +1,6 @@
+# 1.2.7
+Max message history is now configurable and defaults to 15 for performance reasons
+
 # 1.2.6
 (Targeting v62/v64)
 - The range at which players can hear each other is now customizable by the host.

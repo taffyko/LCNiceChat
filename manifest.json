@@ -1,6 +1,6 @@
 {
 	"name": "NiceChat",
-	"version_number": "1.2.6",
+	"version_number": "1.2.7",
 	"website_url": "https://github.com/taffyko/LCNiceChat",
 	"description": "Better text chat. Chat for dead players / spectators, infinite scrolling message history, greatly increased character limit, bigger chat area, fade/hide chat when not in use, and more.",
 	"dependencies": [
