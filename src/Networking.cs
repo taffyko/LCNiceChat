@@ -87,6 +87,7 @@ public class ServerVar<T> : IServerVar where T : IEquatable<T>
     void IServerVar.TryRegister() {
         Plugin.log.LogDebug($"[{Id}] Attempting to register. NetworkManager: {NetworkManager.Singleton != null}, Connected: {NetworkManager.Singleton != null && NetworkManager.Singleton.IsConnectedClient}");
         if (NetworkManager.Singleton != null) {
+            NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnectedCallback;
             NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnectedCallback;
             if (NetworkManager.Singleton.IsConnectedClient) {
                 // FIXME
