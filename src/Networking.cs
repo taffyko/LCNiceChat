@@ -73,6 +73,10 @@ public class ServerVar<T> : IServerVar where T : IEquatable<T>
         }
     }
 
+    internal void Subscribe() {
+        NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnectedCallback;
+    }
+
     public void Dispose() {
         Plugin.log.LogDebug($"[{Id}] Disposed ServerVar");
         if (NetworkManager.Singleton != null) {
@@ -87,8 +91,6 @@ public class ServerVar<T> : IServerVar where T : IEquatable<T>
     void IServerVar.TryRegister() {
         Plugin.log.LogDebug($"[{Id}] Attempting to register. NetworkManager: {NetworkManager.Singleton != null}, Connected: {NetworkManager.Singleton != null && NetworkManager.Singleton.IsConnectedClient}");
         if (NetworkManager.Singleton != null) {
-            NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnectedCallback;
-            NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnectedCallback;
             if (NetworkManager.Singleton.IsConnectedClient) {
                 // FIXME
                 NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler(Id, Handler);
@@ -107,6 +109,12 @@ public class ServerVar<T> : IServerVar where T : IEquatable<T>
 
 [HarmonyPatch]
 class NetworkingPatches {
+    [HarmonyPatch(typeof(GameNetworkManager), "Start")]
+    [HarmonyPostfix]
+    private static void GameNetworkManager_Start_Postfix() {
+        ServerVars.Init();
+    }
+
     [HarmonyPatch(typeof(StartOfRound), "Awake")]
     [HarmonyPostfix]
     private static void StartOfRound_Awake_Postfix() {
