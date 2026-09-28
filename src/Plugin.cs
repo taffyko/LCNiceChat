@@ -31,31 +31,6 @@ public partial class Plugin : BaseUnityPlugin {
         ConfigInit();
         log = BepInEx.Logging.Logger.CreateLogSource(modName);
         log.LogInfo($"Loading {modGUID}");
-        
-        ServerVars.characterLimit = new(
-            "characterLimit",
-            write: (writer, v) => writer.WriteValueSafe(v),
-            read: (FastBufferReader r, out int v) => r.ReadValueSafe(out v),
-            defaultValue: 49
-        );
-        ServerVars.hearDeadPlayers = new(
-            "hearDeadPlayers",
-            write: (writer, v) => writer.WriteValueSafe(v),
-            read: (FastBufferReader r, out bool v) => r.ReadValueSafe(out v),
-            defaultValue: false
-        );
-        ServerVars.messageRange = new(
-            "messageRange",
-            write: (writer, v) => writer.WriteValueSafe(v),
-            read: (FastBufferReader r, out float v) => r.ReadValueSafe(out v),
-            defaultValue: 25f
-        );
-        ServerVars.modVersion = new(
-            "",
-            write: (writer, v) => writer.WriteValueSafe(v),
-            read: (FastBufferReader r, out string v) => r.ReadValueSafe(out v),
-            defaultValue: null!
-        );
 
         harmony.PatchAll(Assembly.GetExecutingAssembly());
     }
@@ -93,6 +68,38 @@ public static class ServerVars {
     public static ServerVar<bool> hearDeadPlayers = null!;
     public static ServerVar<float> messageRange = null!;
     public static ServerVar<string> modVersion = null!;
+
+    internal static void Init() {
+        characterLimit = new(
+            "characterLimit",
+            write: (writer, v) => writer.WriteValueSafe(v),
+            read: (FastBufferReader r, out int v) => r.ReadValueSafe(out v),
+            defaultValue: 49
+        );
+        hearDeadPlayers = new(
+            "hearDeadPlayers",
+            write: (writer, v) => writer.WriteValueSafe(v),
+            read: (FastBufferReader r, out bool v) => r.ReadValueSafe(out v),
+            defaultValue: false
+        );
+        messageRange = new(
+            "messageRange",
+            write: (writer, v) => writer.WriteValueSafe(v),
+            read: (FastBufferReader r, out float v) => r.ReadValueSafe(out v),
+            defaultValue: 25f
+        );
+        modVersion = new(
+            "",
+            write: (writer, v) => writer.WriteValueSafe(v),
+            read: (FastBufferReader r, out string v) => r.ReadValueSafe(out v),
+            defaultValue: null!
+        );
+
+        characterLimit.Subscribe();
+        hearDeadPlayers.Subscribe();
+        messageRange.Subscribe();
+        modVersion.Subscribe();
+    }
 }
 
 [HarmonyPatch]
